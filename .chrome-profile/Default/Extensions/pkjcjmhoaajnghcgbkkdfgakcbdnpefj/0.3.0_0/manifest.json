@@ -1,0 +1,31 @@
+{
+   "action": {
+      "default_icon": {
+         "48": "public/logo.png"
+      }
+   },
+   "background": {
+      "service_worker": "service-worker-loader.js",
+      "type": "module"
+   },
+   "content_scripts": [ {
+      "css": [ "assets/main-CiKs6_zn.css" ],
+      "js": [ "assets/main.tsx-DqN-bXKj.js" ],
+      "matches": [ "\u003Call_urls>" ],
+      "run_at": "document_end"
+   } ],
+   "icons": {
+      "48": "public/logo.png"
+   },
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5SMWgocYSTPaAPKC4msw8FpDmbD7avdNym9vtDzxkITbcRAjV0/gBxHlrMiEw+AfBoXPoT+Ymu8gOEtmQDSrwOhT4XZxj3lVOZSOmDhBqXeVky830LUIUCX7dTcJHAHaSlxF5Rg1Aa8p1obL734lZ0H4bbTAFE7kPfkPwUr+GOJ01TS4X2HTXiXYsQguzZIlroJWyRc89SAFD7pXSiThoIczm0j+N+QW04GE3Wk54ECVtaFaJbHmTAmIbU3Zu7tgNAtKzS6ASMue8Ey3ORpHAaOkfiBNNIQEbzXiUzxRFkE6jjzpZbh9AcQm5mIrHnlQKxMfjNWSYaCfXkHhHtObuwIDAQAB",
+   "manifest_version": 3,
+   "name": "Dakota Marketplace",
+   "permissions": [ "storage", "contextMenus" ],
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "0.3.0",
+   "web_accessible_resources": [ {
+      "matches": [ "\u003Call_urls>" ],
+      "resources": [ "logo.png", "assets/main.tsx-DqN-bXKj.js" ],
+      "use_dynamic_url": false
+   } ]
+}
