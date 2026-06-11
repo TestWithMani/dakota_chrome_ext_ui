@@ -2213,7 +2213,7 @@ class DakotaSidebarPage(BasePage):
             flush=True,
         )
 
-                for attempt in range(60):
+        for attempt in range(60):
             if self._is_info_label_in_scroll_viewport(field):
                 break
 
@@ -2679,8 +2679,8 @@ class DakotaSidebarPage(BasePage):
         deadline = time.time() + 15
         while time.time() < deadline:
             if contact_items.count() > count_before:
-                        break
-                    time.sleep(0.5)
+                break
+            time.sleep(0.5)
 
         count_after = contact_items.count()
         print(

@@ -1,90 +1,35 @@
-import os
-
-
 class Config:
-    BASE_URL = os.getenv("BASE_URL", "https://www.google.com/")
-    WEB_STORE_URL = os.getenv("WEB_STORE_URL", "https://chromewebstore.google.com/")
-    SEARCH_TERM = os.getenv("SEARCH_TERM", "Dakota")
-    BROWSER = os.getenv("BROWSER", "chromium")
-    BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "chrome")
-    HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"
-    START_MAXIMIZED = os.getenv("START_MAXIMIZED", "true").lower() == "true"
-    INSTALL_TOAST_APPEAR_WAIT_SECONDS = float(
-        os.getenv("INSTALL_TOAST_APPEAR_WAIT_SECONDS", "1.5")
+    BASE_URL = "https://www.google.com/"
+    WEB_STORE_URL = "https://chromewebstore.google.com/"
+    SEARCH_TERM = "Dakota"
+    BROWSER = "chromium"
+    BROWSER_CHANNEL = "chrome"
+    HEADLESS = False
+    START_MAXIMIZED = True
+    INSTALL_TOAST_APPEAR_WAIT_SECONDS = 1.5
+    INSTALL_TOAST_CLOSE_SETTLE_SECONDS = 1.5
+    SLOW_MO = 0
+    VIEWPORT_WIDTH = 1280
+    VIEWPORT_HEIGHT = 800
+    CHROME_DAKOTA_EXTENSION_ICON_POSITION = (1159, 49)
+    INSTALL_TOAST_CLOSE_ICON_POSITION = (1150, 84)
+    EXTENSION_MENU_ICON_POSITION = (1192, 52)
+    DAKOTA_PIN_ICON_POSITION = (1148, 198)
+    DAKOTA_MARKETPLACE_URL = "https://www.dakota.com/dakota-marketplace"
+    DAKOTA_USERNAME = "demo.development@dakota.com.unified"
+    DAKOTA_PASSWORD = "Rolus334"
+    DAKOTA_SIDEBAR_SEARCH_TERM = "BlackRock"
+    DAKOTA_COMPANY_DETAILS_SEARCH_TERM = "Antea"
+    DAKOTA_INVESTORS_TAB_SEARCH_TERM = "Databricks"
+    DAKOTA_INVESTMENT_DETAILS_TAB_SEARCH_TERM = "KKR"
+    DAKOTA_PLATFORM_DETAILS_TAB_SEARCH_TERM = "JP Morgan"
+    DAKOTA_CONTACTS_TAB_SEARCH_TERM = "Thoma Bravo"
+    DAKOTA_CONTACTS_TAB_CONTACT_SEARCH_TERM = "Rohde"
+    DAKOTA_SEARCH_API_URL = (
+        "https://marketplace-as-a-service.herokuapp.com/index.php/api/dakota"
     )
-    INSTALL_TOAST_CLOSE_SETTLE_SECONDS = float(
-        os.getenv("INSTALL_TOAST_CLOSE_SETTLE_SECONDS", "1.5")
-    )
-    SLOW_MO = int(os.getenv("SLOW_MO", "0"))
-    VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1280"))
-    VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "800"))
-    CHROME_DAKOTA_EXTENSION_ICON_POSITION = (
-        int(os.getenv("CHROME_DAKOTA_EXTENSION_ICON_X", "1159")),
-        int(os.getenv("CHROME_DAKOTA_EXTENSION_ICON_Y", "49")),
-    )
-    INSTALL_TOAST_CLOSE_ICON_POSITION = (
-        int(os.getenv("INSTALL_TOAST_CLOSE_ICON_X", "1150")),
-        int(os.getenv("INSTALL_TOAST_CLOSE_ICON_Y", "84")),
-    )
-    EXTENSION_MENU_ICON_POSITION = (
-        int(os.getenv("EXTENSION_MENU_ICON_X", "1192")),
-        int(os.getenv("EXTENSION_MENU_ICON_Y", "52")),
-    )
-    DAKOTA_PIN_ICON_POSITION = (
-        int(
-            os.getenv(
-                "DAKOTA_PIN_ICON_X",
-                str(EXTENSION_MENU_ICON_POSITION[0] - 44),
-            )
-        ),
-        int(
-            os.getenv(
-                "DAKOTA_PIN_ICON_Y",
-                str(EXTENSION_MENU_ICON_POSITION[1] + 146),
-            )
-        ),
-    )
-    DAKOTA_MARKETPLACE_URL = os.getenv(
-        "DAKOTA_MARKETPLACE_URL",
-        "https://www.dakota.com/dakota-marketplace",
-    )
-    DAKOTA_USERNAME = os.getenv("DAKOTA_USERNAME", "demo.development@dakota.com.unified")
-    DAKOTA_PASSWORD = os.getenv("DAKOTA_PASSWORD", "Rolus334")
-    DAKOTA_SIDEBAR_SEARCH_TERM = os.getenv("DAKOTA_SIDEBAR_SEARCH_TERM", "BlackRock")
-    DAKOTA_COMPANY_DETAILS_SEARCH_TERM = os.getenv(
-        "DAKOTA_COMPANY_DETAILS_SEARCH_TERM",
-        "Antea",
-    )
-    DAKOTA_INVESTORS_TAB_SEARCH_TERM = os.getenv(
-        "DAKOTA_INVESTORS_TAB_SEARCH_TERM",
-        "Databricks",
-    )
-    DAKOTA_INVESTMENT_DETAILS_TAB_SEARCH_TERM = os.getenv(
-        "DAKOTA_INVESTMENT_DETAILS_TAB_SEARCH_TERM",
-        "KKR",
-    )
-    DAKOTA_PLATFORM_DETAILS_TAB_SEARCH_TERM = os.getenv(
-        "DAKOTA_PLATFORM_DETAILS_TAB_SEARCH_TERM",
-        "JP Morgan",
-    )
-    DAKOTA_CONTACTS_TAB_SEARCH_TERM = os.getenv(
-        "DAKOTA_CONTACTS_TAB_SEARCH_TERM",
-        "Thoma Bravo",
-    )
-    DAKOTA_CONTACTS_TAB_CONTACT_SEARCH_TERM = os.getenv(
-        "DAKOTA_CONTACTS_TAB_CONTACT_SEARCH_TERM",
-        "Rohde",
-    )
-    DAKOTA_SEARCH_API_URL = os.getenv(
-        "DAKOTA_SEARCH_API_URL",
-        "https://marketplace-as-a-service.herokuapp.com/index.php/api/dakota",
-    )
-    DAKOTA_SEARCH_EXPECTED_API_STATUS = int(
-        os.getenv("DAKOTA_SEARCH_EXPECTED_API_STATUS", "200")
-    )
-    DAKOTA_SIDEBAR_API_WAIT_MS = int(
-        os.getenv("DAKOTA_SIDEBAR_API_WAIT_MS", "15000")
-    )
+    DAKOTA_SEARCH_EXPECTED_API_STATUS = 200
+    DAKOTA_SIDEBAR_API_WAIT_MS = 15000
 
 
 BASE_URL = Config.BASE_URL

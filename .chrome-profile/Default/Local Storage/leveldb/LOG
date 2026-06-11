@@ -1,15 +1,6 @@
-2026/06/11-15:31:09.011 3fe8 Reusing MANIFEST C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/06/11-15:31:09.019 3fe8 Recovering log #54
-2026/06/11-15:31:09.022 3fe8 Reusing old log C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/000054.log 
-2026/06/11-15:36:19.576 48f0 Level-0 table #58: started
-2026/06/11-15:36:19.586 48f0 Level-0 table #58: 21855 bytes OK
-2026/06/11-15:36:19.592 48f0 Delete type=0 #54
-2026/06/11-15:36:19.596 48f0 Compacting 4@0 + 1@1 files
-2026/06/11-15:36:19.604 48f0 Generated table #59@0: 18 keys, 8704 bytes
-2026/06/11-15:36:19.605 48f0 Compacted 4@0 + 1@1 files => 8704 bytes
-2026/06/11-15:36:19.608 48f0 compacted to: files[ 0 1 1 0 0 0 0 ]
-2026/06/11-15:36:19.609 48f0 Delete type=2 #46
-2026/06/11-15:36:19.609 48f0 Delete type=2 #49
-2026/06/11-15:36:19.609 48f0 Delete type=2 #52
-2026/06/11-15:36:19.609 48f0 Delete type=2 #55
-2026/06/11-15:36:19.609 48f0 Delete type=2 #58
+2026/06/11-17:54:07.683 1f84 Reusing MANIFEST C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/06/11-17:54:07.694 1f84 Recovering log #61
+2026/06/11-17:54:07.700 1f84 Reusing old log C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/000061.log 
+2026/06/11-17:58:29.642 247c Level-0 table #65: started
+2026/06/11-17:58:29.652 247c Level-0 table #65: 15915 bytes OK
+2026/06/11-17:58:29.658 247c Delete type=0 #61

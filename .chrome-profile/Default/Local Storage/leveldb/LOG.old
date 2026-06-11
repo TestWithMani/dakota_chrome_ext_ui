@@ -1,3 +1,6 @@
-2026/06/11-15:30:17.630 2804 Reusing MANIFEST C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/MANIFEST-000001
-2026/06/11-15:30:17.640 2804 Recovering log #54
-2026/06/11-15:30:17.644 2804 Reusing old log C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/000054.log 
+2026/06/11-17:27:56.263 45a4 Reusing MANIFEST C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/MANIFEST-000001
+2026/06/11-17:27:56.277 45a4 Recovering log #57
+2026/06/11-17:27:56.281 45a4 Reusing old log C:\Users\eman.tauqeer\Desktop\Dakota_automation\.chrome-profile\Default\Local Storage\leveldb/000057.log 
+2026/06/11-17:36:14.556 31a4 Level-0 table #62: started
+2026/06/11-17:36:14.568 31a4 Level-0 table #62: 12491 bytes OK
+2026/06/11-17:36:14.572 31a4 Delete type=0 #57
