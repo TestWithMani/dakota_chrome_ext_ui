@@ -13,6 +13,12 @@ _CHROME_PROFILE_DIR = os.path.join(
 )
 
 
+def _should_reset_chrome_profile() -> bool:
+    if os.getenv("CHROME_USER_DATA_CLEANUP", "false").lower() == "true":
+        return True
+    return bool(os.getenv("JENKINS_URL") or os.getenv("CI"))
+
+
 def pytest_collection_modifyitems(items):
     """Run extension installation before login so the shared profile has the extension."""
     order = {
@@ -95,9 +101,11 @@ def playwright_instance():
 @pytest.fixture(scope="session")
 def _user_data_dir():
     path = os.getenv("CHROME_USER_DATA_DIR", _CHROME_PROFILE_DIR)
+    if _should_reset_chrome_profile() and os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
     os.makedirs(path, exist_ok=True)
     yield path
-    if os.getenv("CHROME_USER_DATA_CLEANUP", "false").lower() == "true":
+    if _should_reset_chrome_profile():
         shutil.rmtree(path, ignore_errors=True)
 
 

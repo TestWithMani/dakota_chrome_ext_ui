@@ -11,7 +11,8 @@ pipeline {
 
     environment {
         PYTHONIOENCODING = 'UTF-8'
-        CHROME_USER_DATA_DIR = "${WORKSPACE}\\.chrome-profile"
+        CHROME_USER_DATA_CLEANUP = 'true'
+        CHROME_USER_DATA_DIR = "${WORKSPACE}\\jenkins-chrome-profile"
     }
 
     stages {
@@ -29,6 +30,15 @@ pipeline {
                     python -m pip install --upgrade pip
                     pip install -r requirements.txt
                     playwright install chrome
+                '''
+            }
+        }
+
+        stage('Prepare Chrome Profile') {
+            steps {
+                bat '''
+                    if exist jenkins-chrome-profile rmdir /s /q jenkins-chrome-profile
+                    if exist .chrome-profile rmdir /s /q .chrome-profile
                 '''
             }
         }

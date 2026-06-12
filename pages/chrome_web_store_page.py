@@ -230,3 +230,5 @@ class ChromeWebStorePage(BasePage):
                 "Confirm extension is already installed (Remove from Chrome visible)"
             ):
                 self.assert_extension_already_installed()
+            with allure.step("Ensure Dakota extension is pinned in the toolbar"):
+                self.pin_dakota_extension_in_toolbar()
