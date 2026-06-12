@@ -14,7 +14,11 @@ from playwright.sync_api import (
 from pages.base_page import BasePage
 from utils.chrome_toolbar import native_left_click
 from utils.config import Config
-from utils.marketplace_page import dismiss_marketplace_obstructions
+from utils.linkedin_page import is_linkedin_url, open_linkedin_public_page
+from utils.marketplace_page import (
+    dismiss_external_page_obstructions,
+    dismiss_marketplace_obstructions,
+)
 
 
 class DakotaSidebarPage(BasePage):
@@ -156,6 +160,17 @@ class DakotaSidebarPage(BasePage):
         self.open_marketplace_and_sidebar(marketplace_url)
         self.ensure_logged_in(username, password)
         self.search_and_verify_results(search_term)
+
+    def verify_external_page_auto_search_results(
+        self,
+        page_url: str,
+        username: str,
+        password: str,
+    ) -> None:
+        """Open an external page, open sidebar, log in, and verify prefilled search results."""
+        self.open_external_page_and_sidebar(page_url)
+        self.ensure_logged_in(username, password)
+        self.verify_sidebar_prefilled_search_and_results(page_url)
 
     def verify_dakota_search_results_scroll(
         self,
@@ -715,6 +730,26 @@ class DakotaSidebarPage(BasePage):
         with allure.step("Open Dakota from the pinned extension icon in the Chrome toolbar"):
             self.open_from_extension_toolbar()
 
+    def open_external_page_and_sidebar(self, page_url: str) -> None:
+        pages_before_navigation = self._snapshot_open_pages()
+        normalized_url = page_url.rstrip("/")
+
+        with allure.step(f"Open external page: {page_url}"):
+            if is_linkedin_url(page_url):
+                open_linkedin_public_page(self.page, page_url)
+            else:
+                self.open(page_url)
+                expect(self.page).to_have_url(
+                    re.compile(re.escape(normalized_url) + r"/?", re.I),
+                    timeout=30000,
+                )
+                self.page.wait_for_load_state("domcontentloaded")
+                dismiss_external_page_obstructions(self.page)
+            self._dismiss_premature_salesforce_tabs(pages_before_navigation)
+
+        with allure.step("Open Dakota from the pinned extension icon in the Chrome toolbar"):
+            self.open_from_extension_toolbar()
+
     def ensure_logged_in(self, username: str, password: str) -> Locator:
         with allure.step("Determine login state from the open sidebar"):
             is_logged_in = self._wait_for_sidebar_auth_state()
@@ -737,6 +772,24 @@ class DakotaSidebarPage(BasePage):
 
         with allure.step("Verify logged-in Dakota sidebar is ready"):
             return self.ensure_sidebar_ready()
+
+    def verify_sidebar_prefilled_search_and_results(self, page_url: str) -> None:
+        expected_prefill = self._normalize_url_for_search_prefill(page_url)
+        with allure.step(
+            "Verify sidebar search bar is prefilled with normalized page URL "
+            f"'{expected_prefill}'"
+        ):
+            search_bar = self.ensure_sidebar_ready()
+            self._wait_for_search_bar_url(search_bar, page_url)
+            actual_value = search_bar.input_value().strip()
+            print(
+                f"Sidebar search bar value: '{actual_value}' "
+                f"(expected '{expected_prefill}')",
+                flush=True,
+            )
+
+        with allure.step(f"Verify search results are displayed for '{expected_prefill}'"):
+            self._verify_search_results_visible(expected_prefill)
 
     def search_and_verify_results(self, search_term: str) -> None:
         with allure.step(f"Search for '{search_term}' in the Dakota sidebar"):
@@ -3434,6 +3487,40 @@ class DakotaSidebarPage(BasePage):
         )
         expect(results.first.locator(self.SEARCH_RESULT_NAME_SELECTOR)).to_be_visible()
         self.page.wait_for_timeout(3000)
+
+    @staticmethod
+    def _normalize_url_for_search_prefill(url: str) -> str:
+        """Match extension prefill: drop scheme, www., and trailing slash."""
+        normalized = url.strip()
+        normalized = re.sub(r"^https?://", "", normalized, flags=re.I)
+        normalized = re.sub(r"^www\.", "", normalized, flags=re.I)
+        return normalized.rstrip("/")
+
+    @classmethod
+    def _search_bar_value_matches_url(cls, actual: str, page_url: str) -> bool:
+        return cls._normalize_url_for_search_prefill(actual) == cls._normalize_url_for_search_prefill(
+            page_url
+        )
+
+    def _wait_for_search_bar_url(
+        self,
+        search_bar: Locator,
+        page_url: str,
+        timeout_s: float = 30,
+    ) -> None:
+        expected_prefill = self._normalize_url_for_search_prefill(page_url)
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            actual_value = search_bar.input_value().strip()
+            if self._search_bar_value_matches_url(actual_value, page_url):
+                return
+            time.sleep(0.5)
+
+        actual_value = search_bar.input_value().strip()
+        pytest.fail(
+            "Sidebar search bar was not prefilled with the expected page URL. "
+            f"Expected '{expected_prefill}', got '{actual_value}'."
+        )
 
     def find_search_bar(self) -> Locator | None:
         if not self.is_sidebar_open():

@@ -16,6 +16,7 @@ class Config:
     EXTENSION_MENU_ICON_POSITION = (1192, 52)
     DAKOTA_PIN_ICON_POSITION = (1148, 198)
     DAKOTA_MARKETPLACE_URL = "https://www.dakota.com/dakota-marketplace"
+    DAKOTA_EXTERNAL_PAGE_URL = "https://www.linkedin.com/company/blackrock/"
     DAKOTA_USERNAME = "demo.development@dakota.com.unified"
     DAKOTA_PASSWORD = "Rolus334"
     DAKOTA_SIDEBAR_SEARCH_TERM = "BlackRock"
@@ -35,6 +36,7 @@ class Config:
 BASE_URL = Config.BASE_URL
 WEB_STORE_URL = Config.WEB_STORE_URL
 DAKOTA_MARKETPLACE_URL = Config.DAKOTA_MARKETPLACE_URL
+DAKOTA_EXTERNAL_PAGE_URL = Config.DAKOTA_EXTERNAL_PAGE_URL
 SEARCH_TERM = Config.SEARCH_TERM
 BROWSER = Config.BROWSER
 BROWSER_CHANNEL = Config.BROWSER_CHANNEL

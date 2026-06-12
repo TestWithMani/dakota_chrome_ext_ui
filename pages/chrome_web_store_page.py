@@ -137,6 +137,9 @@ class ChromeWebStorePage(BasePage):
                     "channel and a persistent profile."
                 )
 
+            if remove_button.is_visible(timeout=2000):
+                return False
+
             for _ in range(15):
                 if remove_button.is_visible(timeout=500):
                     return False
@@ -230,5 +233,3 @@ class ChromeWebStorePage(BasePage):
                 "Confirm extension is already installed (Remove from Chrome visible)"
             ):
                 self.assert_extension_already_installed()
-            with allure.step("Ensure Dakota extension is pinned in the toolbar"):
-                self.pin_dakota_extension_in_toolbar()

@@ -64,6 +64,7 @@ def pytest_collection_modifyitems(items):
         "test_dakota_contacts_tab_contact_detail_email": 39,
         "test_dakota_contacts_tab_contact_detail_linkedin_url": 40,
         "test_dakota_contacts_tab_go_back_to_contact_list": 41,
+        "test_dakota_linkedin_company_auto_search": 42,
     }
     items.sort(key=lambda item: order.get(item.name, 99))
     for item in items:
@@ -112,13 +113,13 @@ def _user_data_dir():
 @pytest.fixture(scope="session")
 def context(playwright_instance, _user_data_dir):
     browser_type = getattr(playwright_instance, Config.BROWSER)
-    browser_args = []
+    browser_args = ["--disable-blink-features=AutomationControlled"]
     if Config.START_MAXIMIZED:
         browser_args.append("--start-maximized")
 
     launch_options = {
         "headless": Config.HEADLESS,
-        "ignore_default_args": ["--disable-extensions"],
+        "ignore_default_args": ["--disable-extensions", "--enable-automation"],
         "slow_mo": Config.SLOW_MO,
         "args": browser_args,
     }
@@ -136,6 +137,9 @@ def context(playwright_instance, _user_data_dir):
     context = browser_type.launch_persistent_context(
         _user_data_dir,
         **launch_options,
+    )
+    context.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
     )
     yield context
     context.close()

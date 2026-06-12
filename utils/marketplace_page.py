@@ -9,6 +9,13 @@ def dismiss_marketplace_obstructions(page: Page) -> None:
     _dismiss_sign_in_overlay(page)
 
 
+def dismiss_external_page_obstructions(page: Page) -> None:
+    """Dismiss overlays on non-marketplace pages (e.g. LinkedIn)."""
+    _dismiss_cookie_banner(page)
+    _dismiss_sign_in_overlay(page)
+    _dismiss_linkedin_prompts(page)
+
+
 def _dismiss_cookie_banner(page: Page) -> None:
     cookie_dialog = page.get_by_role("dialog", name=re.compile(r"cookie", re.I))
     accept_candidates = (
@@ -38,3 +45,25 @@ def _dismiss_sign_in_overlay(page: Page) -> None:
     if close_sign_in.first.is_visible(timeout=2000):
         close_sign_in.first.evaluate("el => el.click()")
         page.wait_for_timeout(500)
+
+
+def _dismiss_linkedin_prompts(page: Page) -> None:
+    if "linkedin.com" not in page.url.lower():
+        return
+
+    dismiss_candidates = (
+        page.locator("button[aria-label='Dismiss']"),
+        page.get_by_role("button", name=re.compile(r"^Dismiss$", re.I)),
+        page.locator("button.artdeco-modal__dismiss"),
+        page.get_by_role("button", name=re.compile(r"^Reject$", re.I)),
+        page.get_by_role("button", name=re.compile(r"^Not now$", re.I)),
+    )
+    for dismiss in dismiss_candidates:
+        try:
+            button = dismiss.first
+            if button.is_visible(timeout=2000):
+                button.click(force=True)
+                page.wait_for_timeout(500)
+                break
+        except Exception:
+            continue
