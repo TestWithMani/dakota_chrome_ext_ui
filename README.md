@@ -61,7 +61,7 @@ pytest -m smoke -v
 | **Internet** | Portal, extension download, and test sites (e.g. LinkedIn) |
 | **Dakota account** | Valid Marketplace username and password |
 | **Allure CLI** | Optional — only needed to open HTML reports locally |
-| **Jenkins** | Optional — for CI runs on `windows-ui` |
+| **Jenkins** | Optional — runs on any available Jenkins agent |
 
 ---
 
@@ -308,7 +308,7 @@ jenkins/email-template-preview.html
 | GitHub repo | `https://github.com/TestWithMani/dakota_chrome_ext_ui` |
 | Branch | `main` |
 | Job name | `Dakota-Chrome-Extension-UI` |
-| Agent label | `windows-ui` |
+| Agent | `any` (built-in or connected node) |
 | Credential ID | `dakota-portal-creds` |
 | Chrome mode | Headless 1920×1080 |
 | Duration | ~15–20 minutes (full suite) |
@@ -479,7 +479,7 @@ Extension ID: `pkjcjmhoaajnghcgbkkdfgakcbdnpefj` (Dakota Marketplace)
 | Login fails | Check username/password; confirm account works in a normal browser |
 | Tests timeout on LinkedIn | Known flaky test; check Allure screenshot and network |
 | Headless when you want UI | Unset `DAKOTA_HEADLESS`, `CI`, and `JENKINS_URL` |
-| Jenkins: agent offline | Ensure `windows-ui` node is connected and online |
+| Jenkins: agent offline | Ensure a Jenkins agent/node is connected and online |
 | Jenkins: wrong credentials | Verify `dakota-portal-creds` in Jenkins → Credentials |
 | Allure `command not found` | Install Allure CLI or view report from Jenkins build |
 

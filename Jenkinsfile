@@ -1,7 +1,5 @@
 pipeline {
-    agent {
-        label 'windows-ui'
-    }
+    agent any
 
     options {
         timestamps()
@@ -167,7 +165,7 @@ pipeline {
                             if exist test-results rmdir /s /q test-results
                             if exist allure-results rmdir /s /q allure-results
                             if exist allure-report rmdir /s /q allure-report
-                            if exist jenkins-chrome-profile rmdir /s /q jenkins-chrome-profile
+                    if exist jenkins-chrome-profile rmdir /s /q jenkins-chrome-profile
                             mkdir test-results
                             mkdir allure-results
                         '''
