@@ -311,7 +311,7 @@ def pytest_runtest_setup(item):
 
     build_url = os.environ.get("BUILD_URL", "").strip()
     if build_url:
-        allure.dynamic.link(build_url, name="Jenkins Build", link_type=allure.link_type.LINK)
+        allure.dynamic.link(build_url, name="Jenkins Build")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -373,10 +373,10 @@ def pytest_runtest_makereport(item, call):
             phase=report.when,
         )
 
-    if report.outcome in {"failed", "error"}:
+    if report.outcome in {"failed", "error"} and report.when == "call":
         _mark_failed_or_broken_as_skipped(item, report)
 
-        if allure_available() and report.when == "call":
+        if allure_available():
             allure.dynamic.description(_report_failure_text(report))
             allure.dynamic.label("original_status", "failed")
 
