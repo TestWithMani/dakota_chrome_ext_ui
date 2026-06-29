@@ -305,6 +305,8 @@ jenkins/email-template-preview.html
 | Item | Value |
 |------|-------|
 | Jenkins URL | `http://110.93.205.18:8080` (default in `jenkins_setup.py`) |
+| GitHub repo | `https://github.com/TestWithMani/dakota_chrome_ext_ui` |
+| Branch | `main` |
 | Job name | `Dakota-Chrome-Extension-UI` |
 | Agent label | `windows-ui-agent` |
 | Credential ID | `dakota-portal-creds` |
@@ -333,7 +335,7 @@ py -3 jenkins_setup.py
 This script:
 
 1. Creates or updates Jenkins credential `dakota-portal-creds` (username/password from `credentials.env`)
-2. Creates or updates pipeline job `Dakota-Chrome-Extension-UI` pointing at GitHub `main`
+2. Creates or updates pipeline job `Dakota-Chrome-Extension-UI` with SCM → [TestWithMani/dakota_chrome_ext_ui](https://github.com/TestWithMani/dakota_chrome_ext_ui) (`main`, `Jenkinsfile`)
 
 **Trigger first build from CLI:**
 
