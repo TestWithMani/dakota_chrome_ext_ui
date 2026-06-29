@@ -1,8 +1,26 @@
-.venv/
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
-allure-results/
-allure-report/
+.venv/
+venv/
+
+# Secrets
+credentials.env
+.env
+
+# Local Chrome profiles
 .chrome-profile/
 jenkins-chrome-profile/
+
+# Downloaded extension (re-created by download_extension.py)
+extensions/dakota.crx
+extensions/dakota/
+
+# IDE
+.idea/
+
+# Test outputs
+allure-results/
+allure-report/
+test-results/

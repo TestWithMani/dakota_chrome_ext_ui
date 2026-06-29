@@ -1,21 +1,12 @@
 import allure
 
-from pages.dakota_sidebar_page import DakotaSidebarPage
-from utils.config import (
-    DAKOTA_COMPANY_DETAILS_SEARCH_TERM,
-    DAKOTA_MARKETPLACE_URL,
-    DAKOTA_PASSWORD,
-    DAKOTA_USERNAME,
-)
+from utils.config import Config
 
 
 @allure.title("Verify Dakota company General tab Billing Address")
 @allure.severity(allure.severity_level.NORMAL)
-def test_dakota_company_general_tab_billing_address(dakota_page):
+def test_dakota_company_general_tab_billing_address(dakota_sidebar):
     """Open a company and verify Billing Address is displayed on the General tab."""
-    DakotaSidebarPage(dakota_page).verify_dakota_company_general_tab_billing_address(
-        DAKOTA_MARKETPLACE_URL,
-        DAKOTA_USERNAME,
-        DAKOTA_PASSWORD,
-        DAKOTA_COMPANY_DETAILS_SEARCH_TERM,
+    dakota_sidebar.verify_dakota_company_general_tab_billing_address(
+        Config.DAKOTA_COMPANY_DETAILS_SEARCH_TERM
     )

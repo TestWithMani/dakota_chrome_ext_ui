@@ -1,27 +1,35 @@
+"""Selenium page object for the Dakota Chrome extension sidebar (Shadow DOM)."""
+
+from __future__ import annotations
+
 import re
 import time
+from urllib.parse import parse_qs, unquote, urlparse
 
-import allure
-import pyautogui
 import pytest
-from playwright.sync_api import (
-    Locator,
-    Page,
-    TimeoutError as PlaywrightTimeoutError,
-    expect,
+from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+
+from pages.dakota_auth import (
+    DAKOTA_PORTAL_URL,
+    DakotaCredentials,
+    _extension_search_ready,
+    is_sidebar_open as auth_is_sidebar_open,
+    open_dakota_sidebar,
+    wait_for_extension_logged_in,
+    wait_for_extension_on_page,
 )
-
-from pages.base_page import BasePage
-from utils.chrome_toolbar import native_left_click
-from utils.config import Config
-from utils.linkedin_page import is_linkedin_url, open_linkedin_public_page
-from utils.marketplace_page import (
-    dismiss_external_page_obstructions,
-    dismiss_marketplace_obstructions,
+from pages.dakota_extension_actions import (
+    DEFAULT_TIMEOUT,
+    SEARCH_DEBOUNCE_SEC,
+    DakotaExtensionActions,
 )
+from utils.allure_helpers import allure_step
 
 
-class DakotaSidebarPage(BasePage):
+class DakotaSidebarPage(DakotaExtensionActions):
     LOGIN_BUTTON_SELECTOR = ".dakota-salesforce-signin-button"
     SEARCH_BAR_SELECTOR = "input.dakota-search-input, #company-search"
     SEARCH_BAR_SELECTORS = (
@@ -36,9 +44,8 @@ class DakotaSidebarPage(BasePage):
     SEARCH_RESULT_ITEM_SELECTOR = ".dakota-record-item"
     SEARCH_RESULT_NAME_SELECTOR = ".dakota-record-name"
     SEARCH_RESULT_TYPE_SELECTOR = ".dakota-record-type"
-    FIRM_RECORD_TYPE_LABEL = "Firm"
     ALLOCATOR_RECORD_TYPE_LABEL = "Allocator"
-    LOAD_MORE_BUTTON_SELECTOR = "button:has-text('Load more')"
+    LOAD_MORE_BUTTON_SELECTOR = "button.dakota-load-more-button"
     STATS_GRID_SELECTOR = ".dakota-stats-grid"
     STAT_ITEM_SELECTOR = ".dakota-stat-item"
     STAT_NUMBER_SELECTOR = ".dakota-stat-number"
@@ -72,6 +79,7 @@ class DakotaSidebarPage(BasePage):
     INVESTORS_HEADER_SELECTOR = ".dakota-investors-header"
     INVESTORS_COUNT_TEXT_PATTERN = re.compile(r"\(Showing \d+ investors?\)", re.I)
     LOAD_MORE_INVESTORS_BUTTON_TEXT = "Load More Investors"
+    LOAD_MORE_INVESTORS_MAX_ATTEMPTS = 3
     INVESTORS_PAGE_SELECTOR = ".dakota-investors-page"
     INVESTORS_SCROLL_CONTAINER_SELECTORS = (
         ".dakota-investors-page",
@@ -80,9 +88,7 @@ class DakotaSidebarPage(BasePage):
         ".dakota-sidebar-content",
     )
     INVESTMENT_DETAILS_TAB_NAME = "Investment Details"
-    INVESTMENT_DETAILS_TAB_SELECTOR = (
-        'a.dakota-tab-button[href*="/investment-details"]'
-    )
+    INVESTMENT_DETAILS_TAB_SELECTOR = 'a.dakota-tab-button[href*="/investment-details"]'
     INVESTMENT_DETAILS_NO_CONTENT_TEXT = "No investment information available"
     INVESTMENT_DETAILS_ITEM_SELECTOR = ".dakota-investment-details-item"
     INVESTMENT_DETAILS_DESCRIPTION_SELECTOR = ".dakota-investment-description"
@@ -91,9 +97,7 @@ class DakotaSidebarPage(BasePage):
     INVESTMENT_DETAILS_CHECK_SIZE_LABEL = "Check Size"
     INVESTMENT_DETAILS_PAGE_SELECTOR = ".dakota-investment-details-page"
     PLATFORM_DETAILS_TAB_NAME = "Platform Details"
-    PLATFORM_DETAILS_TAB_SELECTOR = (
-        'a.dakota-tab-button[href*="/platform-details"]'
-    )
+    PLATFORM_DETAILS_TAB_SELECTOR = 'a.dakota-tab-button[href*="/platform-details"]'
     PLATFORM_DETAILS_ITEM_SELECTOR = ".dakota-platform-info-item"
     PLATFORM_DETAILS_DESCRIPTION_SELECTOR = ".dakota-platform-description"
     PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL = "Platform Description"
@@ -101,9 +105,7 @@ class DakotaSidebarPage(BasePage):
     CONTACT_ROLE_SELECTOR = ".contacts-dakota-record-subDetails"
     CONTACT_URL_LINK_SELECTOR = "a.contacts-dakota-contact-link"
     CONTACT_EMAIL_SELECTOR = ".contacts-dakota-contact-email"
-    CONTACT_EMAIL_LINK_SELECTOR = (
-        ".contacts-dakota-contact-email a.contacts-dakota-contact-link"
-    )
+    CONTACT_EMAIL_LINK_SELECTOR = ".contacts-dakota-contact-email a.contacts-dakota-contact-link"
     CONTACTS_SEARCH_INPUT_SELECTOR = "#contact-search, .contacts-dakota-search-input"
     CONTACT_NAME_SELECTOR = ".contacts-dakota-record-name"
     CONTACT_DETAIL_PAGE_SELECTOR = ".contacts-dakota-detail-page"
@@ -120,9 +122,6 @@ class DakotaSidebarPage(BasePage):
     CONTACT_DETAIL_BACK_BUTTON_SELECTOR = ".contacts-dakota-detail-back-button"
     CONTACT_DETAIL_BACK_BUTTON_TEXT = "Go back to contact list"
     ACCOUNT_OVERVIEW_HEADING = "Account Overview"
-    ACCOUNT_OVERVIEW_CONTENT_SELECTOR = (
-        "h3:has-text('Account Overview') ~ p"
-    )
     INFO_LABEL_SELECTOR = ".dakota-info-label"
     INFO_VALUE_SELECTOR = ".dakota-info-value"
     TYPE_LABEL = "Type"
@@ -136,2463 +135,185 @@ class DakotaSidebarPage(BasePage):
         ".dakota-sidebar-content",
     )
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-
-    def login_to_dakota_marketplace(
+    def __init__(
         self,
-        marketplace_url: str,
-        username: str,
-        password: str,
+        driver: webdriver.Chrome,
+        credentials: DakotaCredentials | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
     ) -> None:
-        """Open Dakota Marketplace, open the extension sidebar, and log in when required."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
+        super().__init__(driver)
+        self.credentials = credentials
+        self.timeout = timeout
+        self.wait = WebDriverWait(driver, timeout)
 
-    def verify_dakota_search_results(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open sidebar, ensure login, search, and verify results plus API response."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
+    # ------------------------------------------------------------------
+    # Shadow DOM helpers
+    # ------------------------------------------------------------------
 
-    def verify_external_page_auto_search_results(
-        self,
-        page_url: str,
-        username: str,
-        password: str,
-    ) -> None:
-        """Open an external page, open sidebar, log in, and verify prefilled search results."""
-        self.open_external_page_and_sidebar(page_url)
-        self.ensure_logged_in(username, password)
-        self.verify_sidebar_prefilled_search_and_results(page_url)
+    def _js(self, script: str, *args):
+        return self.driver.execute_script(script, *args)
 
-    def verify_dakota_search_results_scroll(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open sidebar, search, and verify results can be scrolled to the end."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.scroll_search_results_to_end(search_term)
+    def _root(self) -> str:
+        return "const root = document.getElementById('crxjs-app')?.shadowRoot;"
 
-    def verify_dakota_search_results_load_more(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open sidebar, search, scroll, then load and verify more results."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.scroll_search_results_to_end(search_term)
-        self.load_more_search_results(search_term)
-
-    def verify_dakota_company_details(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open sidebar, search, open a result, and verify company details."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_search_result_and_verify_company_details(search_term)
-
-    def verify_dakota_company_general_tab(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open sidebar, search, open a result, and verify General tab stat cards."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_stat_cards()
-
-    def verify_dakota_contacts_count_matches_general_tab(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Contacts tab count matches General tab stat."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_count_matches_general_tab()
-
-    def verify_dakota_company_account_overview(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Account Overview on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_account_overview()
-
-    def verify_dakota_company_general_tab_type(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Type is displayed on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_type()
-
-    def verify_dakota_company_general_tab_metro_area(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Metro Area is displayed on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_metro_area()
-
-    def verify_dakota_company_general_tab_website(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Website is displayed on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_website()
-
-    def verify_dakota_company_general_tab_linkedin_url(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify LinkedIn Url is displayed on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_linkedin_url()
-
-    def verify_dakota_company_general_tab_billing_address(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Billing Address is displayed on the General tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_general_tab_billing_address()
-
-    def verify_dakota_company_investors_tab(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a private company and verify the Investors tab is available."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_company_investors_tab()
-
-    def verify_dakota_company_investment_details_tab(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a Firm result and verify the Investment Details tab is available."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_firm_search_result()
-        self.verify_company_investment_details_tab()
-
-    def verify_dakota_company_platform_details_tab(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open an Allocator result and verify the Platform Details tab is available."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_allocator_search_result()
-        self.verify_company_platform_details_tab()
-
-    def verify_dakota_platform_details_tab_platform_description(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Platform Details displays Platform Description."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_platform_details_tab_platform_description()
-
-    def verify_dakota_contacts_tab_results(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify the Contacts tab shows contacts or empty state."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_results()
-
-    def verify_dakota_contacts_tab_contact_count(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify the Contacts tab shows the contact count."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_count()
-
-    def verify_dakota_contacts_tab_load_more_button(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Contacts Load more matches General tab count."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_load_more_button()
-
-    def verify_dakota_contacts_tab_load_more_displays_more(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Load more displays additional contacts."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_load_more_displays_more()
-
-    def verify_dakota_contacts_tab_contact_roles(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify all contacts display a role."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_roles()
-
-    def verify_dakota_contacts_tab_contact_urls(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify all contacts display a URL."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_urls()
-
-    def verify_dakota_contacts_tab_contact_emails(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify all contacts display an email address."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_emails()
-
-    def verify_dakota_contacts_tab_search_results(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        company_search_term: str,
-        contact_search_term: str,
-    ) -> None:
-        """Open a company and verify the Contacts search bar returns results."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(company_search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_search_results(contact_search_term)
-
-    def verify_dakota_contacts_tab_contact_details(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify details are displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_details()
-
-    def verify_dakota_contacts_tab_contact_type(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify Contact Type is displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_type()
-
-    def verify_dakota_contacts_tab_contact_metro_area(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify Metro Area is displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_metro_area()
-
-    def verify_dakota_contacts_tab_contact_phone(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify Phone is displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_phone()
-
-    def verify_dakota_contacts_tab_contact_detail_email(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify Email is displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_detail_email()
-
-    def verify_dakota_contacts_tab_contact_detail_linkedin_url(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company, click the first contact, and verify LinkedIn URL is displayed."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_contact_detail_linkedin_url()
-
-    def verify_dakota_contacts_tab_go_back_to_contact_list(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a contact and verify Go back to contact list returns to the contacts list."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_contacts_tab_go_back_to_contact_list()
-
-    def verify_dakota_investors_tab_results(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify the Investors tab shows results or empty state."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_investors_tab_results()
-
-    def verify_dakota_investment_details_tab_details(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a Firm result and verify Investment Details shows data or empty state."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_firm_search_result()
-        self.verify_investment_details_tab_details()
-
-    def verify_dakota_investment_details_tab_geography(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a Firm result and verify Investment Details displays Geography."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_firm_search_result()
-        self.verify_investment_details_tab_geography()
-
-    def verify_dakota_investment_details_tab_industry(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a Firm result and verify Investment Details displays Industry."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_firm_search_result()
-        self.verify_investment_details_tab_industry()
-
-    def verify_dakota_investment_details_tab_check_size(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a Firm result and verify Investment Details displays Check Size."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_firm_search_result()
-        self.verify_investment_details_tab_check_size()
-
-    def verify_dakota_investors_tab_investor_count(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify the Investors tab shows the investor count."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_investors_tab_investor_count()
-
-    def verify_dakota_investors_tab_load_more_button(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Load More Investors on the Investors tab."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_investors_tab_load_more_button()
-
-    def verify_dakota_investors_tab_load_more_displays_more(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify Load More Investors displays more investors."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_investors_tab_load_more_displays_more()
-
-    def verify_dakota_investors_tab_investor_metro_areas(
-        self,
-        marketplace_url: str,
-        username: str,
-        password: str,
-        search_term: str,
-    ) -> None:
-        """Open a company and verify all investors display a state/city."""
-        self.open_marketplace_and_sidebar(marketplace_url)
-        self.ensure_logged_in(username, password)
-        self.search_and_verify_results(search_term)
-        self.open_first_search_result()
-        self.verify_investors_tab_investor_metro_areas()
-
-    def open_marketplace_and_sidebar(self, marketplace_url: str) -> None:
-        pages_before_navigation = self._snapshot_open_pages()
-
-        with allure.step("Open Dakota Marketplace page"):
-            self.open(marketplace_url)
-            expect(self.page).to_have_url(re.compile(r".*dakota-marketplace.*", re.I))
-            expect(self.page.locator("h1").first).to_be_visible(timeout=25000)
-            dismiss_marketplace_obstructions(self.page)
-            self._dismiss_premature_salesforce_tabs(pages_before_navigation)
-
-        with allure.step("Open Dakota from the pinned extension icon in the Chrome toolbar"):
-            self.open_from_extension_toolbar()
-
-    def open_external_page_and_sidebar(self, page_url: str) -> None:
-        pages_before_navigation = self._snapshot_open_pages()
-        normalized_url = page_url.rstrip("/")
-
-        with allure.step(f"Open external page: {page_url}"):
-            if is_linkedin_url(page_url):
-                open_linkedin_public_page(self.page, page_url)
-            else:
-                self.open(page_url)
-                expect(self.page).to_have_url(
-                    re.compile(re.escape(normalized_url) + r"/?", re.I),
-                    timeout=30000,
-                )
-                self.page.wait_for_load_state("domcontentloaded")
-                dismiss_external_page_obstructions(self.page)
-            self._dismiss_premature_salesforce_tabs(pages_before_navigation)
-
-        with allure.step("Open Dakota from the pinned extension icon in the Chrome toolbar"):
-            self.open_from_extension_toolbar()
-
-    def ensure_logged_in(self, username: str, password: str) -> Locator:
-        with allure.step("Determine login state from the open sidebar"):
-            is_logged_in = self._wait_for_sidebar_auth_state()
-
-        if not is_logged_in:
-            with allure.step("Click Login to Dakota inside the open sidebar"):
-                login_button = self._sidebar().locator(self.LOGIN_BUTTON_SELECTOR).first
-                expect(login_button).to_be_visible(timeout=10000)
-                login_button.click()
-
-            with allure.step("Complete Salesforce login"):
-                login_page = self._wait_for_salesforce_login_page()
-                self.submit_salesforce_login(login_page, username, password)
-                self.wait_for_salesforce_auth(login_page)
-
-                self.page.bring_to_front()
-                expect(self._sidebar().locator(self.SEARCH_BAR_SELECTOR).first).to_be_visible(
-                    timeout=120000,
-                )
-
-        with allure.step("Verify logged-in Dakota sidebar is ready"):
-            return self.ensure_sidebar_ready()
-
-    def verify_sidebar_prefilled_search_and_results(self, page_url: str) -> None:
-        expected_prefill = self._normalize_url_for_search_prefill(page_url)
-        with allure.step(
-            "Verify sidebar search bar is prefilled with normalized page URL "
-            f"'{expected_prefill}'"
-        ):
-            search_bar = self.ensure_sidebar_ready()
-            self._wait_for_search_bar_url(search_bar, page_url)
-            actual_value = search_bar.input_value().strip()
-            print(
-                f"Sidebar search bar value: '{actual_value}' "
-                f"(expected '{expected_prefill}')",
-                flush=True,
+    def _sidebar(self) -> bool:
+        return bool(
+            self._js(
+                f"""
+                {self._root()}
+                return !!(root && root.querySelector('{self.SIDEBAR_OPEN_SELECTOR}'));
+                """
             )
-
-        with allure.step(f"Verify search results are displayed for '{expected_prefill}'"):
-            self._verify_search_results_visible(expected_prefill)
-
-    def search_and_verify_results(self, search_term: str) -> None:
-        with allure.step(f"Search for '{search_term}' in the Dakota sidebar"):
-            search_bar = self.ensure_sidebar_ready()
-
-            def api_matches(response) -> bool:
-                return (
-                    Config.DAKOTA_SEARCH_API_URL in response.url
-                    and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-                )
-
-            with self.page.expect_response(api_matches, timeout=30000) as response_info:
-                self._replace_input_value(search_bar, search_term)
-                search_bar.press("Enter")
-
-            response = response_info.value
-            print(
-                f"Dakota search API responded with {response.status}: {response.url}"
-            )
-
-        with allure.step("Verify search results are displayed in the sidebar"):
-            self._verify_search_results_visible(search_term)
-
-    def scroll_search_results_to_end(self, search_term: str) -> None:
-        with allure.step("Scroll search results to the end of the list"):
-            sidebar = self._sidebar()
-            results = sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR)
-            expect(results.first).to_be_visible(timeout=15000)
-
-            result_count = results.count()
-            assert result_count >= 1, (
-                f"Expected search results before scrolling for '{search_term}'."
-            )
-
-            scroll_before = self._read_results_scroll_metrics(sidebar)
-            print(
-                "Scroll metrics before: "
-                f"top={scroll_before['scrollTop']}, "
-                f"height={scroll_before['scrollHeight']}, "
-                f"viewport={scroll_before['clientHeight']}"
-            )
-
-            if result_count > 1:
-                results.last.scroll_into_view_if_needed(timeout=15000)
-
-            self._scroll_results_container_to_end(sidebar)
-            self.page.wait_for_timeout(1000)
-
-            scroll_after = self._read_results_scroll_metrics(sidebar)
-            print(
-                "Scroll metrics after: "
-                f"top={scroll_after['scrollTop']}, "
-                f"height={scroll_after['scrollHeight']}, "
-                f"viewport={scroll_after['clientHeight']}"
-            )
-
-        with allure.step("Verify search results scrolled to the end"):
-            self._verify_results_scrolled_to_end(scroll_before, scroll_after)
-            if result_count > 1:
-                expect(results.last).to_be_in_viewport(timeout=5000)
-
-    def load_more_search_results(self, search_term: str) -> None:
-        with allure.step('Click "Load more" to fetch additional search results'):
-            sidebar = self._sidebar()
-            results = sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR)
-            result_count_before = results.count()
-            assert result_count_before >= 1, (
-                f"Expected search results before Load more for '{search_term}'."
-            )
-
-            load_more_button = self._load_more_button(sidebar)
-            expect(load_more_button).to_be_visible(timeout=10000)
-
-            print(
-                f"Search result count before Load more: {result_count_before}",
-                flush=True,
-            )
-
-            def api_matches(response) -> bool:
-                return (
-                    Config.DAKOTA_SEARCH_API_URL in response.url
-                    and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-                )
-
-            with self.page.expect_response(api_matches, timeout=30000) as response_info:
-                load_more_button.click()
-
-            response = response_info.value
-            print(
-                f"Load more API responded with {response.status}: {response.url}",
-                flush=True,
-            )
-            self.page.wait_for_timeout(3000)
-
-        with allure.step("Verify additional search results are displayed"):
-            sidebar = self._sidebar()
-            results = sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR)
-            deadline = time.time() + 15
-            while time.time() < deadline:
-                if results.count() > result_count_before:
-                    break
-                time.sleep(0.5)
-
-            result_count_after = results.count()
-            print(
-                f"Search result count after Load more: {result_count_after}",
-                flush=True,
-            )
-            assert result_count_after > result_count_before, (
-                f'Expected more results after clicking "Load more" for '
-                f"'{search_term}', but count stayed at {result_count_after}."
-            )
-            expect(results.nth(result_count_before)).to_be_visible(timeout=10000)
-
-    def _load_more_button(self, sidebar: Locator) -> Locator:
-        role_based = sidebar.get_by_role("button", name=re.compile(r"load more", re.I))
-        if role_based.count() > 0:
-            return role_based.first
-        return sidebar.locator(self.LOAD_MORE_BUTTON_SELECTOR).first
-
-    def open_first_search_result(self) -> None:
-        sidebar = self._sidebar()
-        first_result = sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR).first
-        expect(first_result).to_be_visible(timeout=15000)
-
-        with allure.step("Open the first search result"):
-            def api_matches(response) -> bool:
-                return (
-                    Config.DAKOTA_SEARCH_API_URL in response.url
-                    and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-                )
-
-            with self.page.expect_response(api_matches, timeout=30000) as response_info:
-                first_result.click()
-
-            response = response_info.value
-            print(
-                f"Company detail API responded with {response.status}: {response.url}",
-                flush=True,
-            )
-            self.page.wait_for_timeout(3000)
-
-    def open_firm_search_result(self) -> None:
-        sidebar = self._sidebar()
-        firm_result = sidebar.locator(
-            f"{self.SEARCH_RESULT_ITEM_SELECTOR}:has("
-            f"{self.SEARCH_RESULT_TYPE_SELECTOR} "
-            f"p:text-is('{self.FIRM_RECORD_TYPE_LABEL}'))"
-        ).first
-        expect(firm_result).to_be_visible(timeout=15000)
-
-        with allure.step("Open the Firm search result"):
-            def api_matches(response) -> bool:
-                return (
-                    Config.DAKOTA_SEARCH_API_URL in response.url
-                    and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-                )
-
-            with self.page.expect_response(api_matches, timeout=30000) as response_info:
-                firm_result.click()
-
-            response = response_info.value
-            print(
-                f"Firm detail API responded with {response.status}: {response.url}",
-                flush=True,
-            )
-            self.page.wait_for_timeout(3000)
-
-    def open_allocator_search_result(self) -> None:
-        sidebar = self._sidebar()
-        allocator_result = sidebar.locator(
-            f"{self.SEARCH_RESULT_ITEM_SELECTOR}:has("
-            f"{self.SEARCH_RESULT_TYPE_SELECTOR} "
-            f"p:text-is('{self.ALLOCATOR_RECORD_TYPE_LABEL}'))"
-        ).first
-        expect(allocator_result).to_be_visible(timeout=15000)
-
-        with allure.step("Open the Allocator search result"):
-            def api_matches(response) -> bool:
-                return (
-                    Config.DAKOTA_SEARCH_API_URL in response.url
-                    and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-                )
-
-            with self.page.expect_response(api_matches, timeout=30000) as response_info:
-                allocator_result.click()
-
-            response = response_info.value
-            print(
-                f"Allocator detail API responded with {response.status}: {response.url}",
-                flush=True,
-            )
-            self.page.wait_for_timeout(3000)
-
-    def open_search_result_and_verify_company_details(self, search_term: str) -> None:
-        self.open_first_search_result()
-
-        with allure.step("Verify company details content is displayed"):
-            self._verify_company_details_content_displayed(self._sidebar(), search_term)
-
-    def verify_general_tab_stat_cards(self) -> None:
-        with allure.step("Verify General tab stat cards are displayed"):
-            sidebar = self._sidebar()
-            expect(sidebar.locator(self.STATS_GRID_SELECTOR)).to_be_visible(timeout=15000)
-
-            for label in self.GENERAL_TAB_STAT_LABELS:
-                stat_value = self._get_general_tab_stat_value(sidebar, label)
-                assert stat_value, f"Expected a displayed count for {label}."
-                print(f"General tab {label}: {stat_value}", flush=True)
-
-    def verify_general_tab_account_overview(self) -> None:
-        with allure.step("Verify Account Overview heading is displayed"):
-            sidebar = self._sidebar()
-            overview_heading = sidebar.get_by_role(
-                "heading",
-                name=re.compile(r"Account Overview", re.I),
-            )
-            expect(overview_heading).to_be_visible(timeout=15000)
-
-        with allure.step("Verify Account Overview content is displayed"):
-            overview_content = sidebar.locator(self.ACCOUNT_OVERVIEW_CONTENT_SELECTOR).first
-            expect(overview_content).to_be_visible(timeout=15000)
-            content_text = overview_content.inner_text().strip()
-            assert len(content_text) >= 20, (
-                "Account Overview section did not display meaningful content."
-            )
-            print(
-                f"Account Overview displayed ({len(content_text)} characters)",
-                flush=True,
-            )
-
-    def verify_general_tab_type(self) -> None:
-        with allure.step("Verify Type label is displayed on General tab"):
-            sidebar = self._sidebar()
-            type_label = sidebar.locator(self.INFO_LABEL_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.TYPE_LABEL)}$")
-            ).first
-            expect(type_label).to_be_visible(timeout=15000)
-
-        with allure.step("Verify Type value is displayed on General tab"):
-            type_value = self._get_general_tab_info_value(sidebar, self.TYPE_LABEL)
-            assert type_value, "Expected a displayed Type value on the General tab."
-            print(f"General tab Type: {type_value}", flush=True)
-
-    def verify_general_tab_metro_area(self) -> None:
-        with allure.step("Verify Metro Area label is displayed on General tab"):
-            sidebar = self._sidebar()
-            metro_area_label = sidebar.locator(self.INFO_LABEL_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.METRO_AREA_LABEL)}$")
-            ).first
-            expect(metro_area_label).to_be_visible(timeout=15000)
-
-        with allure.step("Verify Metro Area value is displayed on General tab"):
-            metro_area_value = self._get_general_tab_info_value(
-                sidebar,
-                self.METRO_AREA_LABEL,
-            )
-            assert metro_area_value, (
-                "Expected a displayed Metro Area value on the General tab."
-            )
-            print(f"General tab Metro Area: {metro_area_value}", flush=True)
-
-    def verify_general_tab_website(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Scroll General tab until Website is visible"):
-            self._ensure_general_tab_info_label_visible(sidebar, self.WEBSITE_LABEL)
-            self.page.wait_for_timeout(3000)
-
-        with allure.step("Verify Website value is displayed on General tab"):
-            website_value = self._get_general_tab_info_value(sidebar, self.WEBSITE_LABEL)
-            assert website_value, "Expected a displayed Website value on the General tab."
-            print(f"General tab Website: {website_value}", flush=True)
-
-    def verify_general_tab_linkedin_url(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Scroll General tab until LinkedIn Url is visible"):
-            self._ensure_general_tab_info_label_visible(sidebar, self.LINKEDIN_URL_LABEL)
-            self.page.wait_for_timeout(3000)
-
-        with allure.step("Verify LinkedIn Url value is displayed on General tab"):
-            linkedin_url_value = self._get_general_tab_info_value(
-                sidebar,
-                self.LINKEDIN_URL_LABEL,
-            )
-            assert linkedin_url_value, (
-                "Expected a displayed LinkedIn Url value on the General tab."
-            )
-            print(f"General tab LinkedIn Url: {linkedin_url_value}", flush=True)
-
-    def verify_general_tab_billing_address(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Scroll General tab until Billing Address is visible"):
-            self._ensure_general_tab_info_label_visible(
-                sidebar,
-                self.BILLING_ADDRESS_LABEL,
-            )
-            self.page.wait_for_timeout(3000)
-
-        with allure.step("Verify Billing Address value is displayed on General tab"):
-            billing_address_value = self._get_general_tab_info_value(
-                sidebar,
-                self.BILLING_ADDRESS_LABEL,
-            )
-            assert billing_address_value, (
-                "Expected a displayed Billing Address value on the General tab."
-            )
-            print(
-                f"General tab Billing Address: {billing_address_value}",
-                flush=True,
-            )
-
-    def verify_company_investors_tab(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-            print(f"{self.INVESTORS_TAB_NAME} tab is displayed.", flush=True)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-    def verify_investors_tab_results(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-        with allure.step("Verify Investors tab displays results or empty state"):
-            self._verify_investors_tab_content_displayed(sidebar)
-
-    def verify_investors_tab_investor_count(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-        with allure.step("Verify Investors tab shows number of investors displayed"):
-            self._verify_investors_tab_count_displayed(sidebar)
-
-    def verify_investors_tab_load_more_button(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-        with allure.step("Scroll Investors tab until Load More Investors is visible"):
-            load_more_button = self._ensure_load_more_investors_button_visible(sidebar)
-            expect(load_more_button).to_be_visible(timeout=15000)
-            print(
-                f"{self.LOAD_MORE_INVESTORS_BUTTON_TEXT} button is visible.",
-                flush=True,
-            )
-
-    def verify_investors_tab_load_more_displays_more(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-        with allure.step("Scroll Investors tab until Load More Investors is visible"):
-            load_more_button = self._ensure_load_more_investors_button_visible(sidebar)
-            expect(load_more_button).to_be_visible(timeout=15000)
-
-        with allure.step(
-            'Click "Load More Investors" to fetch additional investors'
-        ):
-            self._load_more_investors(sidebar)
-
-        with allure.step("Scroll Investors tab to the end of the list"):
-            self.scroll_investors_tab_to_end(sidebar)
-
-    def verify_investors_tab_investor_metro_areas(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investors tab is displayed"):
-            investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-            ).first
-            expect(investors_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investors tab"):
-            self._open_investors_tab(sidebar)
-
-        with allure.step("Scroll Investors tab until Load More Investors is visible"):
-            load_more_button = self._ensure_load_more_investors_button_visible(sidebar)
-            expect(load_more_button).to_be_visible(timeout=15000)
-
-        with allure.step("Verify all investors on the page display a state/city"):
-            self._verify_investors_metro_areas_displayed(sidebar)
-
-    def verify_company_investment_details_tab(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investment Details tab is displayed"):
-            investment_details_tab = sidebar.locator(
-                self.INVESTMENT_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Investment\s+Details$", re.I)
-            ).first
-            expect(investment_details_tab).to_be_visible(timeout=15000)
-            print(
-                f"{self.INVESTMENT_DETAILS_TAB_NAME} tab is displayed.",
-                flush=True,
-            )
-
-        with allure.step("Navigate to Investment Details tab"):
-            self._open_investment_details_tab(sidebar)
-
-    def verify_investment_details_tab_details(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investment Details tab is displayed"):
-            investment_details_tab = sidebar.locator(
-                self.INVESTMENT_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Investment\s+Details$", re.I)
-            ).first
-            expect(investment_details_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investment Details tab"):
-            self._open_investment_details_tab(sidebar)
-
-        with allure.step(
-            "Verify Investment Details tab displays data or empty state"
-        ):
-            self._verify_investment_details_tab_content_displayed(sidebar)
-
-    def verify_investment_details_tab_geography(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investment Details tab is displayed"):
-            investment_details_tab = sidebar.locator(
-                self.INVESTMENT_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Investment\s+Details$", re.I)
-            ).first
-            expect(investment_details_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investment Details tab"):
-            self._open_investment_details_tab(sidebar)
-
-        with allure.step("Verify Investment Details tab displays Geography"):
-            self._verify_investment_details_geography_displayed(sidebar)
-
-    def verify_investment_details_tab_industry(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investment Details tab is displayed"):
-            investment_details_tab = sidebar.locator(
-                self.INVESTMENT_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Investment\s+Details$", re.I)
-            ).first
-            expect(investment_details_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investment Details tab"):
-            self._open_investment_details_tab(sidebar)
-
-        with allure.step("Verify Investment Details tab displays Industry"):
-            self._verify_investment_details_industry_displayed(sidebar)
-
-    def verify_investment_details_tab_check_size(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Investment Details tab is displayed"):
-            investment_details_tab = sidebar.locator(
-                self.INVESTMENT_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Investment\s+Details$", re.I)
-            ).first
-            expect(investment_details_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Investment Details tab"):
-            self._open_investment_details_tab(sidebar)
-
-        with allure.step("Verify Investment Details tab displays Check Size"):
-            self._verify_investment_details_check_size_displayed(sidebar)
-
-    def verify_company_platform_details_tab(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Platform Details tab is displayed"):
-            platform_details_tab = sidebar.locator(
-                self.PLATFORM_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Platform\s+Details$", re.I)
-            ).first
-            expect(platform_details_tab).to_be_visible(timeout=15000)
-            print(
-                f"{self.PLATFORM_DETAILS_TAB_NAME} tab is displayed.",
-                flush=True,
-            )
-
-        with allure.step("Navigate to Platform Details tab"):
-            self._open_platform_details_tab(sidebar)
-
-    def verify_platform_details_tab_platform_description(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Platform Details tab is displayed"):
-            platform_details_tab = sidebar.locator(
-                self.PLATFORM_DETAILS_TAB_SELECTOR
-            ).filter(
-                has_text=re.compile(r"^Platform\s+Details$", re.I)
-            ).first
-            expect(platform_details_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Platform Details tab"):
-            self._open_platform_details_tab(sidebar)
-
-        with allure.step("Verify Platform Details tab displays Platform Description"):
-            self._verify_platform_details_platform_description_displayed(sidebar)
-
-    def verify_contacts_tab_results(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify Contacts tab displays contacts or empty state"):
-            self._verify_contacts_tab_content_displayed(sidebar)
-
-    def verify_contacts_tab_contact_roles(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify all contacts on the page display a role"):
-            self._verify_contacts_tab_roles_displayed(sidebar)
-
-    def verify_contacts_tab_contact_urls(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify all contacts on the page display a URL"):
-            self._verify_contacts_tab_urls_displayed(sidebar)
-
-    def verify_contacts_tab_contact_emails(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify all contacts on the page display an email address"):
-            self._verify_contacts_tab_emails_displayed(sidebar)
-
-    def verify_contacts_tab_search_results(self, contact_search_term: str) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step(
-            f"Search contacts for '{contact_search_term}' and verify results"
-        ):
-            self._search_contacts_and_verify_results(sidebar, contact_search_term)
-
-    def verify_contacts_tab_contact_details(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Click the first contact and verify details are displayed"):
-            contact_name = self._open_first_contact_details(sidebar)
-            self._verify_contact_details_displayed(sidebar, contact_name)
-
-    def verify_contacts_tab_contact_type(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Click the first contact and verify Contact Type is displayed"):
-            self._open_first_contact_details(sidebar)
-            self._verify_contact_detail_contact_type_displayed(sidebar)
-
-    def verify_contacts_tab_contact_metro_area(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Click the first contact and verify Metro Area is displayed"):
-            self._open_first_contact_details(sidebar)
-            self._verify_contact_detail_metro_area_displayed(sidebar)
-
-    def verify_contacts_tab_contact_phone(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Click the first contact and verify Phone is displayed"):
-            self._open_first_contact_details(sidebar)
-            self._verify_contact_detail_phone_displayed(sidebar)
-
-    def verify_contacts_tab_contact_detail_email(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Click the first contact and verify Email is displayed"):
-            self._open_first_contact_details(sidebar)
-            self._verify_contact_detail_email_displayed(sidebar)
-
-    def verify_contacts_tab_contact_detail_linkedin_url(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step(
-            "Click the first contact, scroll to LinkedIn URL if needed, "
-            "and verify it is displayed"
-        ):
-            self._open_first_contact_details(sidebar)
-            self._verify_contact_detail_linkedin_url_displayed(sidebar)
-
-    def verify_contacts_tab_go_back_to_contact_list(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Open the first contact details page"):
-            self._open_first_contact_details(sidebar)
-
-        with allure.step(
-            f'Click "{self.CONTACT_DETAIL_BACK_BUTTON_TEXT}" and verify contacts list'
-        ):
-            self._go_back_to_contacts_list(sidebar)
-            self._verify_contacts_list_displayed(sidebar)
-
-    def verify_contacts_tab_contact_count(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify Contacts tab shows number of results displayed"):
-            self._verify_contacts_tab_count_displayed(sidebar)
-
-    def verify_contacts_tab_load_more_button(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Read Contacts count on General tab"):
-            general_contacts_value = self._get_general_tab_stat_value(
-                sidebar,
-                self.CONTACTS_TAB_NAME,
-            )
-            general_contacts_count = self._parse_contacts_stat_count(
-                general_contacts_value
-            )
-            print(
-                f"General tab Contacts count: {general_contacts_value} "
-                f"({general_contacts_count})",
-                flush=True,
-            )
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Scroll Contacts tab to the end of the list"):
-            self.scroll_contacts_tab_to_end(sidebar)
-
-        with allure.step(
-            "Verify Load more button visibility matches General tab contact count"
-        ):
-            self._verify_contacts_tab_load_more_visibility(
-                sidebar,
-                general_contacts_count,
-            )
-
-    def verify_contacts_tab_load_more_displays_more(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Read Contacts count on General tab"):
-            general_contacts_value = self._get_general_tab_stat_value(
-                sidebar,
-                self.CONTACTS_TAB_NAME,
-            )
-            general_contacts_count = self._parse_contacts_stat_count(
-                general_contacts_value
-            )
-            print(
-                f"General tab Contacts count: {general_contacts_value} "
-                f"({general_contacts_count})",
-                flush=True,
-            )
-            assert general_contacts_count > self.CONTACTS_PAGE_SIZE, (
-                f"Expected more than {self.CONTACTS_PAGE_SIZE} contacts to verify "
-                f"Load more displays more, but General tab shows "
-                f"{general_contacts_count}."
-            )
-
-        with allure.step("Verify Contacts tab is displayed"):
-            contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-                has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-            ).first
-            expect(contacts_tab).to_be_visible(timeout=15000)
-
-        with allure.step("Navigate to Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Scroll Contacts tab until Load more is visible"):
-            self.scroll_contacts_tab_to_end(sidebar)
-            load_more_button = sidebar.locator(
-                self.CONTACTS_LOAD_MORE_BUTTON_SELECTOR
-            )
-            if load_more_button.count() == 0:
-                load_more_button = self._ensure_load_more_contacts_button_visible(
-                    sidebar
-                )
-            else:
-                load_more_button = load_more_button.first
-                load_more_button.scroll_into_view_if_needed(timeout=5000)
-            expect(load_more_button).to_be_visible(timeout=15000)
-
-        with allure.step('Click "Load more" to fetch additional contacts'):
-            self._load_more_contacts(sidebar)
-
-        with allure.step("Scroll Contacts tab to the end of the list"):
-            self.scroll_contacts_tab_to_end(sidebar)
-
-    def verify_contacts_count_matches_general_tab(self) -> None:
-        sidebar = self._sidebar()
-
-        with allure.step("Read Contacts count on General tab"):
-            general_contacts_value = self._get_general_tab_stat_value(
-                sidebar,
-                self.CONTACTS_TAB_NAME,
-            )
-            general_contacts_count = self._parse_contacts_stat_count(general_contacts_value)
-            print(
-                f"General tab Contacts count: {general_contacts_value} "
-                f"({general_contacts_count})",
-                flush=True,
-            )
-
-        with allure.step("Open Contacts tab"):
-            self._open_contacts_tab(sidebar)
-
-        with allure.step("Verify Contacts tab count matches General tab"):
-            contacts_tab_count = self._count_contacts_on_contacts_tab(sidebar)
-            print(f"Contacts tab displayed count: {contacts_tab_count}", flush=True)
-            assert contacts_tab_count == general_contacts_count, (
-                "Contacts tab count does not match General tab Contacts stat. "
-                f"General tab: {general_contacts_count}, Contacts tab: {contacts_tab_count}"
-            )
-
-    def _get_general_tab_stat_value(self, sidebar: Locator, label: str) -> str:
-        stats_grid = sidebar.locator(self.STATS_GRID_SELECTOR)
-        stat_item = stats_grid.locator(self.STAT_ITEM_SELECTOR).filter(
-            has_text=label
-        ).first
-        expect(stat_item).to_be_visible(timeout=10000)
-        stat_number = stat_item.locator(self.STAT_NUMBER_SELECTOR)
-        expect(stat_number).to_be_visible()
-        return stat_number.inner_text().strip()
-
-    def _get_general_tab_info_value(self, sidebar: Locator, label: str) -> str:
-        info_value = sidebar.locator(
-            f"{self.INFO_LABEL_SELECTOR}:has-text('{label}') + {self.INFO_VALUE_SELECTOR}"
-        ).first
-        expect(info_value).to_be_visible(timeout=10000)
-        return info_value.inner_text().strip()
-
-    def _ensure_general_tab_info_label_visible(
-        self,
-        sidebar: Locator,
-        label: str,
-    ) -> Locator:
-        info_label = sidebar.locator(self.INFO_LABEL_SELECTOR).filter(
-            has_text=re.compile(rf"^{re.escape(label)}$")
-        ).first
-        expect(info_label).to_be_attached(timeout=15000)
-
-        scroll_before = self._read_general_tab_scroll_metrics(info_label)
-        print(
-            "General tab scroll before: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
         )
 
-        if not self._is_info_label_in_scroll_viewport(info_label):
-            for attempt in range(60):
-                if self._is_info_label_in_scroll_viewport(info_label):
-                    break
-
-                scrolled = self._scroll_info_label_toward_viewport(info_label)
-                if not scrolled:
-                    self._wheel_scroll_general_tab_down(sidebar)
-                self.page.wait_for_timeout(200)
-
-                if attempt % 10 == 9:
-                    print(
-                        f"General tab scroll attempt {attempt + 1}: "
-                        f"{self._read_general_tab_scroll_metrics(info_label)}",
-                        flush=True,
-                    )
-
-        info_label.evaluate(
-            "node => node.scrollIntoView({ block: 'center', inline: 'nearest' })"
-        )
-        self.page.wait_for_timeout(300)
-
-        if not self._is_info_label_in_scroll_viewport(info_label):
-            self._wheel_scroll_general_tab_down(sidebar)
-            info_label.evaluate(
-                "node => node.scrollIntoView({ block: 'center', inline: 'nearest' })"
+    def _is_visible_in_shadow(self, css_selector: str) -> bool:
+        return bool(
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return false;
+                const el = root.querySelector(arguments[0]);
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden'
+                    && el.offsetParent !== null;
+                """,
+                css_selector,
             )
-
-        expect(info_label).to_be_visible(timeout=15000)
-        assert self._is_info_label_in_scroll_viewport(info_label), (
-            f"{label} is not visible in the General tab viewport after scrolling."
         )
 
-        scroll_after = self._read_general_tab_scroll_metrics(info_label)
-        print(
-            "General tab scroll after: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
+    def _wait_visible(self, css_selector: str, timeout: int | None = None) -> None:
+        WebDriverWait(self.driver, timeout or self.timeout).until(
+            lambda d: self._is_visible_in_shadow(css_selector)
         )
-        return info_label
 
-    def _find_scrollable_ancestor(self, target: Locator) -> dict[str, int | str]:
-        return target.evaluate(
+    def _click_shadow(self, css_selector: str) -> None:
+        clicked = self._js(
             """
-            (node) => {
-                const isScrollable = (element) => {
-                    const style = window.getComputedStyle(element);
-                    const overflowY = style.overflowY;
-                    return (
-                        (overflowY === 'auto' || overflowY === 'scroll')
-                        && element.scrollHeight > element.clientHeight + 1
-                    );
-                };
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return false;
+            const el = root.querySelector(arguments[0]);
+            if (!el) return false;
+            el.click();
+            return true;
+            """,
+            css_selector,
+        )
+        if not clicked:
+            raise TimeoutException(f"Could not click shadow element: {css_selector}")
 
-                let current = node.parentElement;
-                while (current) {
-                    if (isScrollable(current)) {
-                        return {
-                            scrollTop: current.scrollTop,
-                            scrollHeight: current.scrollHeight,
-                            clientHeight: current.clientHeight,
-                            className: current.className || '',
-                        };
-                    }
-                    current = current.parentElement;
+    def _fill_shadow_input(self, css_selector: str, value: str) -> None:
+        filled = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return false;
+            const input = root.querySelector(arguments[0]);
+            if (!input) return false;
+            input.focus();
+            input.value = arguments[1];
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+            """,
+            css_selector,
+            value,
+        )
+        if not filled:
+            raise TimeoutException(f"Could not fill shadow input: {css_selector}")
+
+    def _query_count(self, css_selector: str) -> int:
+        count = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return 0;
+            return root.querySelectorAll(arguments[0]).length;
+            """,
+            css_selector,
+        )
+        return int(count or 0)
+
+    def _query_text(self, css_selector: str) -> str:
+        text = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const el = root.querySelector(arguments[0]);
+            return el ? (el.textContent || '').trim() : '';
+            """,
+            css_selector,
+        )
+        return str(text or "")
+
+    def _query_attr(self, css_selector: str, attr: str) -> str:
+        value = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const el = root.querySelector(arguments[0]);
+            return el ? (el.getAttribute(arguments[1]) || '').trim() : '';
+            """,
+            css_selector,
+            attr,
+        )
+        return str(value or "")
+
+    def _query_input_value(self, css_selector: str) -> str:
+        value = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const el = root.querySelector(arguments[0]);
+            return el ? (el.value || '').trim() : '';
+            """,
+            css_selector,
+        )
+        return str(value or "")
+
+    def _query_all_texts(self, css_selector: str) -> list[str]:
+        texts = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll(arguments[0]))
+                .map(el => (el.textContent || '').trim());
+            """,
+            css_selector,
+        )
+        return list(texts or [])
+
+        scrolled = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return false;
+            const selectors = arguments[0];
+            for (const sel of selectors) {
+                const container = root.querySelector(sel);
+                if (container && container.scrollHeight > container.clientHeight + 1) {
+                    container.scrollTop = container.scrollHeight;
+                    return true;
                 }
-
-                return {
-                    scrollTop: 0,
-                    scrollHeight: 0,
-                    clientHeight: 0,
-                    className: '',
-                };
             }
-            """
-        )
-
-    def _read_general_tab_scroll_metrics(self, target: Locator) -> dict[str, int]:
-        metrics = self._find_scrollable_ancestor(target)
-        return {
-            "scrollTop": int(metrics["scrollTop"]),
-            "scrollHeight": int(metrics["scrollHeight"]),
-            "clientHeight": int(metrics["clientHeight"]),
-        }
-
-    def _is_info_label_in_scroll_viewport(self, target: Locator) -> bool:
-        if target.count() == 0 or not target.is_visible():
-            return False
-
-        return target.evaluate(
-            """
-            (node) => {
-                const isScrollable = (element) => {
-                    const style = window.getComputedStyle(element);
-                    const overflowY = style.overflowY;
-                    return (
-                        (overflowY === 'auto' || overflowY === 'scroll')
-                        && element.scrollHeight > element.clientHeight + 1
-                    );
-                };
-
-                const rect = node.getBoundingClientRect();
-                let current = node.parentElement;
-                while (current) {
-                    if (isScrollable(current)) {
-                        const containerRect = current.getBoundingClientRect();
-                        return (
-                            rect.top >= containerRect.top
-                            && rect.bottom <= containerRect.bottom
-                            && rect.width > 0
-                            && rect.height > 0
-                        );
-                    }
-                    current = current.parentElement;
+            const anchor = root.querySelector('.dakota-record-item, .contacts-dakota-record-item, .dakota-investor-item');
+            if (!anchor) return false;
+            let node = anchor.parentElement;
+            while (node) {
+                if (node.scrollHeight > node.clientHeight + 1) {
+                    node.scrollTop = node.scrollHeight;
+                    return true;
                 }
-
-                return (
-                    rect.top >= 0
-                    && rect.bottom <= window.innerHeight
-                    && rect.width > 0
-                    && rect.height > 0
-                );
+                node = node.parentElement;
             }
-            """
+            return false;
+            """,
+            list(container_selectors),
         )
-
-    def _scroll_info_label_toward_viewport(self, target: Locator) -> bool:
-        return target.evaluate(
-            """
-            (node) => {
-                const isScrollable = (element) => {
-                    const style = window.getComputedStyle(element);
-                    const overflowY = style.overflowY;
-                    return (
-                        (overflowY === 'auto' || overflowY === 'scroll')
-                        && element.scrollHeight > element.clientHeight + 1
-                    );
-                };
-
-                let container = node.parentElement;
-                while (container && !isScrollable(container)) {
-                    container = container.parentElement;
-                }
-                if (!container) {
-                    return false;
-                }
-
-                const rect = node.getBoundingClientRect();
-                const containerRect = container.getBoundingClientRect();
-                const previousScrollTop = container.scrollTop;
-
-                if (rect.bottom > containerRect.bottom) {
-                    container.scrollTop += rect.bottom - containerRect.bottom + 24;
-                } else if (rect.top < containerRect.top) {
-                    container.scrollTop -= containerRect.top - rect.top + 24;
-                } else {
-                    container.scrollTop = Math.min(
-                        container.scrollTop + 300,
-                        container.scrollHeight - container.clientHeight
-                    );
-                }
-
-                return container.scrollTop !== previousScrollTop;
-            }
-            """
-        )
-
-    def _wheel_scroll_general_tab_down(self, sidebar: Locator) -> None:
-        for selector in self.GENERAL_TAB_SCROLL_CONTAINER_SELECTORS:
-            scroll_container = sidebar.locator(selector).first
-            if scroll_container.count() == 0:
-                continue
-
-            metrics = self._read_scroll_container_metrics(scroll_container)
-            if metrics["scrollHeight"] <= metrics["clientHeight"] + 1:
-                continue
-
-            scroll_container.hover(force=True, timeout=3000)
-            self.page.mouse.wheel(0, 500)
-            return
-
-        sidebar.hover(force=True, timeout=3000)
-        self.page.mouse.wheel(0, 500)
-
-    def _read_scroll_container_metrics(self, scroll_container: Locator) -> dict[str, int]:
-        return scroll_container.evaluate(
-            """node => ({
-                scrollTop: node.scrollTop,
-                scrollHeight: node.scrollHeight,
-                clientHeight: node.clientHeight,
-            })"""
-        )
-
-    def _parse_contacts_stat_count(self, value: str) -> int:
-        normalized = value.strip().upper()
-        if normalized == "N/A":
-                pytest.fail(
-                "General tab Contacts count is N/A; cannot compare with Contacts tab."
-            )
-
-        digits = re.sub(r"[^0-9]", "", value)
-        if not digits:
-            pytest.fail(f"Could not parse Contacts count from General tab value '{value}'.")
-        return int(digits)
-
-    def _open_contacts_tab(self, sidebar: Locator) -> None:
-        contacts_tab = sidebar.locator(self.CONTACTS_TAB_SELECTOR).filter(
-            has_text=re.compile(rf"^{re.escape(self.CONTACTS_TAB_NAME)}$")
-        ).first
-        expect(contacts_tab).to_be_visible(timeout=10000)
-        contacts_tab.click()
-        self.page.wait_for_timeout(3000)
-        print(f"Navigated to {self.CONTACTS_TAB_NAME} tab.", flush=True)
-
-    def _verify_contacts_tab_content_displayed(self, sidebar: Locator) -> None:
-        no_results = sidebar.locator(".dakota-no-results p").filter(
-            has_text=re.compile(re.escape(self.CONTACTS_NO_RESULTS_TEXT), re.I)
-        )
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            if no_results.count() > 0 and no_results.first.is_visible():
-                break
-            time.sleep(0.5)
-
-        expect(no_results.or_(contact_items.first)).to_be_visible(timeout=15000)
-
-        if no_results.count() > 0 and no_results.first.is_visible():
-                print(
-                f"Contacts tab displayed empty state: {self.CONTACTS_NO_RESULTS_TEXT}",
-                flush=True,
-            )
-        else:
-            expect(contact_items.first).to_be_visible(timeout=10000)
-            contact_count = contact_items.count()
-            print(
-                f"Contacts tab displayed {contact_count} contact result(s).",
-                flush=True,
-            )
-
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contacts_tab_roles_displayed(self, sidebar: Locator) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            "Expected at least one contact to verify role display."
-        )
-
-        for index in range(contact_count):
-            contact = contact_items.nth(index)
-            role = contact.locator(self.CONTACT_ROLE_SELECTOR).first
-            expect(role).to_be_visible(timeout=10000)
-            role_text = role.inner_text().strip()
-            assert role_text, (
-                f"Contact {index + 1} of {contact_count} is missing a role."
-            )
-            print(
-                f"Contact {index + 1} role: {role_text}",
-                flush=True,
-            )
-
-        print(
-            f"All {contact_count} contact(s) display a role.",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contacts_tab_urls_displayed(self, sidebar: Locator) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            "Expected at least one contact to verify URL display."
-        )
-
-        for index in range(contact_count):
-            contact = contact_items.nth(index)
-            url_link = contact.locator(self.CONTACT_URL_LINK_SELECTOR).first
-            expect(url_link).to_be_visible(timeout=10000)
-            url_href = (url_link.get_attribute("href") or "").strip()
-            assert url_href, (
-                f"Contact {index + 1} of {contact_count} is missing a URL href."
-            )
-            print(
-                f"Contact {index + 1} URL: {url_href}",
-                flush=True,
-            )
-
-        print(
-            f"All {contact_count} contact(s) display a URL.",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contacts_tab_emails_displayed(self, sidebar: Locator) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            "Expected at least one contact to verify email display."
-        )
-
-        for index in range(contact_count):
-            contact = contact_items.nth(index)
-            email_block = contact.locator(self.CONTACT_EMAIL_SELECTOR)
-            expect(email_block).to_be_visible(timeout=10000)
-
-            email_link = contact.locator(self.CONTACT_EMAIL_LINK_SELECTOR).first
-            expect(email_link).to_be_visible(timeout=10000)
-            email_href = (email_link.get_attribute("href") or "").strip()
-            assert email_href.lower().startswith("mailto:"), (
-                f"Contact {index + 1} of {contact_count} is missing a mailto email "
-                f"href. Found: {email_href!r}"
-            )
-
-            email_text = email_link.inner_text().strip()
-            assert email_text, (
-                f"Contact {index + 1} of {contact_count} is missing email text."
-            )
-            print(
-                f"Contact {index + 1} email: {email_text}",
-                flush=True,
-            )
-
-        print(
-            f"All {contact_count} contact(s) display an email address.",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _open_first_contact_details(self, sidebar: Locator) -> str:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        first_contact = contact_items.first
-        name_locator = first_contact.locator(self.CONTACT_NAME_SELECTOR).first
-        expect(name_locator).to_be_visible(timeout=10000)
-        contact_name = name_locator.inner_text().strip()
-        assert contact_name, "Expected the first contact to have a name before opening details."
-
-        first_contact.click()
-        print(f"Clicked first contact: {contact_name}", flush=True)
-        self.page.wait_for_timeout(2000)
-        return contact_name
-
-    def _verify_contact_details_displayed(
-        self,
-        sidebar: Locator,
-        expected_contact_name: str,
-    ) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        detail_name = sidebar.locator(self.CONTACT_DETAIL_NAME_SELECTOR).first
-        expect(detail_name).to_be_visible(timeout=10000)
-        detail_name_text = detail_name.inner_text().strip()
-        assert detail_name_text, "Contact detail page name is empty."
-        assert detail_name_text.lower() == expected_contact_name.lower(), (
-            f"Contact detail name '{detail_name_text}' does not match the "
-            f"selected contact '{expected_contact_name}'."
-        )
-
-        detail_title = sidebar.locator(self.CONTACT_DETAIL_TITLE_SELECTOR).first
-        detail_fields = sidebar.locator(self.CONTACT_DETAIL_FIELD_SELECTOR)
-        title_text = ""
-        if detail_title.count() > 0 and detail_title.is_visible():
-            title_text = detail_title.inner_text().strip()
-
-        field_count = detail_fields.count()
-        populated_fields = 0
-        for index in range(field_count):
-            field = detail_fields.nth(index)
-            label = field.locator(".contacts-dakota-detail-field-label").first
-            value = field.locator(".contacts-dakota-detail-field-value").first
-            if label.count() == 0 or value.count() == 0:
-                continue
-            label_text = label.inner_text().strip()
-            value_text = value.inner_text().strip()
-            if label_text and value_text:
-                populated_fields += 1
-                print(
-                    f"Contact detail field: {label_text} = {value_text}",
-                    flush=True,
-                )
-
-        assert title_text or populated_fields >= 1, (
-            f"Contact detail page for '{detail_name_text}' has no loaded data."
-        )
-
-        if title_text:
-            print(f"Contact detail title: {title_text}", flush=True)
-
-        print(
-            f"Contact detail page displayed data for '{detail_name_text}' "
-            f"({populated_fields} field(s)).",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contact_detail_contact_type_displayed(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        contact_type_field = sidebar.locator(
-            f"{self.CONTACT_DETAIL_FIELD_SELECTOR}:has("
-            f"{self.CONTACT_DETAIL_FIELD_LABEL_SELECTOR}"
-            f':text-is("{self.CONTACT_DETAIL_CONTACT_TYPE_LABEL}"))'
-        ).first
-        expect(contact_type_field).to_be_visible(timeout=10000)
-
-        contact_type_value = contact_type_field.locator(
-            self.CONTACT_DETAIL_FIELD_VALUE_SELECTOR
-        ).first
-        expect(contact_type_value).to_be_visible(timeout=10000)
-        contact_type_text = contact_type_value.inner_text().strip()
-        assert contact_type_text, (
-            f"{self.CONTACT_DETAIL_CONTACT_TYPE_LABEL} is displayed but has no value."
-        )
-
-        print(
-            f"{self.CONTACT_DETAIL_CONTACT_TYPE_LABEL}: {contact_type_text}",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contact_detail_metro_area_displayed(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        metro_area_field = sidebar.locator(
-            f"{self.CONTACT_DETAIL_FIELD_SELECTOR}:has("
-            f"{self.CONTACT_DETAIL_FIELD_LABEL_SELECTOR}"
-            f':text-is("{self.CONTACT_DETAIL_METRO_AREA_LABEL}"))'
-        ).first
-        expect(metro_area_field).to_be_visible(timeout=10000)
-
-        metro_area_value = metro_area_field.locator(
-            self.CONTACT_DETAIL_FIELD_VALUE_SELECTOR
-        ).first
-        expect(metro_area_value).to_be_visible(timeout=10000)
-        metro_area_text = metro_area_value.inner_text().strip()
-        assert metro_area_text, (
-            f"{self.CONTACT_DETAIL_METRO_AREA_LABEL} is displayed but has no value."
-        )
-
-        print(
-            f"{self.CONTACT_DETAIL_METRO_AREA_LABEL}: {metro_area_text}",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contact_detail_phone_displayed(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        phone_field = sidebar.locator(
-            f"{self.CONTACT_DETAIL_FIELD_SELECTOR}:has("
-            f"{self.CONTACT_DETAIL_FIELD_LABEL_SELECTOR}"
-            f':text-is("{self.CONTACT_DETAIL_PHONE_LABEL}"))'
-        ).first
-        expect(phone_field).to_be_visible(timeout=10000)
-
-        phone_value = phone_field.locator(self.CONTACT_DETAIL_FIELD_VALUE_SELECTOR).first
-        expect(phone_value).to_be_visible(timeout=10000)
-        phone_text = phone_value.inner_text().strip()
-        assert phone_text, (
-            f"{self.CONTACT_DETAIL_PHONE_LABEL} is displayed but has no value."
-        )
-
-        phone_link = phone_field.locator(
-            f'a.contacts-dakota-detail-field-link[href^="tel:"]'
-        ).first
-        expect(phone_link).to_be_visible(timeout=10000)
-        phone_href = (phone_link.get_attribute("href") or "").strip()
-        assert phone_href.lower().startswith("tel:"), (
-            f"{self.CONTACT_DETAIL_PHONE_LABEL} link is missing a tel: href. "
-            f"Found: {phone_href!r}"
-        )
-
-        print(f"{self.CONTACT_DETAIL_PHONE_LABEL}: {phone_text}", flush=True)
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contact_detail_email_displayed(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        email_field = sidebar.locator(
-            f"{self.CONTACT_DETAIL_FIELD_SELECTOR}:has("
-            f"{self.CONTACT_DETAIL_FIELD_LABEL_SELECTOR}"
-            f':text-is("{self.CONTACT_DETAIL_EMAIL_LABEL}"))'
-        ).first
-        expect(email_field).to_be_visible(timeout=10000)
-
-        email_value = email_field.locator(self.CONTACT_DETAIL_FIELD_VALUE_SELECTOR).first
-        expect(email_value).to_be_visible(timeout=10000)
-        email_text = email_value.inner_text().strip()
-        assert email_text, (
-            f"{self.CONTACT_DETAIL_EMAIL_LABEL} is displayed but has no value."
-        )
-
-        email_link = email_field.locator(
-            'a.contacts-dakota-detail-field-link[href^="mailto:"]'
-        ).first
-        expect(email_link).to_be_visible(timeout=10000)
-        email_href = (email_link.get_attribute("href") or "").strip()
-        assert email_href.lower().startswith("mailto:"), (
-            f"{self.CONTACT_DETAIL_EMAIL_LABEL} link is missing a mailto: href. "
-            f"Found: {email_href!r}"
-        )
-
-        print(f"{self.CONTACT_DETAIL_EMAIL_LABEL}: {email_text}", flush=True)
-        self.page.wait_for_timeout(3000)
-
-    def _ensure_contact_detail_field_visible(
-        self,
-        sidebar: Locator,
-        field_label: str,
-    ) -> Locator:
-        field = sidebar.locator(
-            f"{self.CONTACT_DETAIL_FIELD_SELECTOR}:has("
-            f"{self.CONTACT_DETAIL_FIELD_LABEL_SELECTOR}"
-            f':text-is("{field_label}"))'
-        ).first
-        expect(field).to_be_attached(timeout=15000)
-
-        if self._is_info_label_in_scroll_viewport(field):
-            print(
-                f"Contact detail {field_label} is already visible in the viewport.",
-                flush=True,
-            )
-            return field
-
-        scroll_before = self._read_general_tab_scroll_metrics(field)
-        print(
-            "Contact detail scroll before: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
-        )
-
-        for attempt in range(60):
-            if self._is_info_label_in_scroll_viewport(field):
-                break
-
-            scrolled = self._scroll_info_label_toward_viewport(field)
-            if not scrolled:
-                self._wheel_scroll_general_tab_down(sidebar)
-            self.page.wait_for_timeout(200)
-
-            if attempt % 10 == 9:
-                print(
-                    f"Contact detail scroll attempt {attempt + 1}: "
-                    f"{self._read_general_tab_scroll_metrics(field)}",
-                    flush=True,
-                )
-
-        field.evaluate(
-            "node => node.scrollIntoView({ block: 'center', inline: 'nearest' })"
-        )
-        self.page.wait_for_timeout(300)
-
-        if not self._is_info_label_in_scroll_viewport(field):
-            self._wheel_scroll_general_tab_down(sidebar)
-            field.evaluate(
-                "node => node.scrollIntoView({ block: 'center', inline: 'nearest' })"
-            )
-
-        expect(field).to_be_visible(timeout=15000)
-        assert self._is_info_label_in_scroll_viewport(field), (
-            f"{field_label} is not visible in the contact detail viewport "
-            "after scrolling."
-        )
-
-        scroll_after = self._read_general_tab_scroll_metrics(field)
-        print(
-            "Contact detail scroll after: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
-        )
-        return field
-
-    def _verify_contact_detail_linkedin_url_displayed(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-
-        linkedin_field = self._ensure_contact_detail_field_visible(
-            sidebar,
-            self.CONTACT_DETAIL_LINKEDIN_URL_LABEL,
-        )
-
-        linkedin_value = linkedin_field.locator(
-            self.CONTACT_DETAIL_FIELD_VALUE_SELECTOR
-        ).first
-        expect(linkedin_value).to_be_visible(timeout=10000)
-        linkedin_text = linkedin_value.inner_text().strip()
-        assert linkedin_text, (
-            f"{self.CONTACT_DETAIL_LINKEDIN_URL_LABEL} is displayed but has no value."
-        )
-
-        linkedin_link = linkedin_field.locator(
-            "a.contacts-dakota-detail-field-link"
-        ).first
-        expect(linkedin_link).to_be_visible(timeout=10000)
-        linkedin_href = (linkedin_link.get_attribute("href") or "").strip()
-        assert "linkedin.com" in linkedin_href.lower(), (
-            f"{self.CONTACT_DETAIL_LINKEDIN_URL_LABEL} link is missing a LinkedIn "
-            f"href. Found: {linkedin_href!r}"
-        )
-
-        print(
-            f"{self.CONTACT_DETAIL_LINKEDIN_URL_LABEL}: {linkedin_href}",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _go_back_to_contacts_list(self, sidebar: Locator) -> None:
-        detail_page = sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)
-        expect(detail_page).to_be_visible(timeout=15000)
-        self.page.wait_for_timeout(3000)
-
-        back_button = sidebar.locator(self.CONTACT_DETAIL_BACK_BUTTON_SELECTOR).filter(
-            has_text=re.compile(
-                re.escape(self.CONTACT_DETAIL_BACK_BUTTON_TEXT), re.I
-            )
-        ).first
-        expect(back_button).to_be_visible(timeout=10000)
-        back_button.click()
-        print(
-            f'Clicked "{self.CONTACT_DETAIL_BACK_BUTTON_TEXT}".',
-            flush=True,
-        )
-        self.page.wait_for_timeout(2000)
-
-    def _verify_contacts_list_displayed(self, sidebar: Locator) -> None:
-        expect(sidebar.locator(self.CONTACT_DETAIL_PAGE_SELECTOR)).not_to_be_visible(
-            timeout=15000
-        )
-
-        search_input = sidebar.locator(self.CONTACTS_SEARCH_INPUT_SELECTOR).first
-        expect(search_input).to_be_visible(timeout=10000)
-
-        contacts_header = sidebar.locator(self.CONTACTS_HEADER_SELECTOR)
-        expect(contacts_header.locator("h3")).to_have_text(
-            self.CONTACTS_TAB_NAME,
-            timeout=15000,
-        )
-
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                                    break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            "Expected the contacts list to display at least one contact."
-        )
-        print(
-            f"Contacts list displayed {contact_count} contact(s).",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _search_contacts_and_verify_results(
-        self,
-        sidebar: Locator,
-        contact_search_term: str,
-    ) -> None:
-        search_input = sidebar.locator(self.CONTACTS_SEARCH_INPUT_SELECTOR).first
-        expect(search_input).to_be_visible(timeout=10000)
-        print(
-            f"Searching contacts for '{contact_search_term}'.",
-            flush=True,
-        )
-
-        def api_matches(response) -> bool:
-            return (
-                Config.DAKOTA_SEARCH_API_URL in response.url
-                and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-            )
-
-        with self.page.expect_response(api_matches, timeout=30000) as response_info:
-            self._replace_input_value(search_input, contact_search_term)
-
-        response = response_info.value
-        print(
-            f"Contacts search API responded with {response.status}: {response.url}",
-            flush=True,
-        )
-
-        loading = sidebar.locator(".contacts-dakota-loading")
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if loading.count() == 0 or not loading.first.is_visible():
-                break
-            time.sleep(0.5)
-
-        self._verify_contacts_search_results_displayed(sidebar, contact_search_term)
-
-    def _verify_contacts_search_results_displayed(
-        self,
-        sidebar: Locator,
-        contact_search_term: str,
-    ) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        no_results = sidebar.locator(".contacts-dakota-no-results p").filter(
-            has_text=re.compile(re.escape(self.CONTACTS_NO_RESULTS_TEXT), re.I)
-        )
-
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            if no_results.count() > 0 and no_results.first.is_visible():
-                break
-            time.sleep(0.5)
-
-        if no_results.count() > 0 and no_results.first.is_visible():
-            pytest.fail(
-                f"Contacts search for '{contact_search_term}' returned no results."
-            )
-
-        expect(contact_items.first).to_be_visible(timeout=10000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            f"Expected contacts search for '{contact_search_term}' to return results."
-        )
-
-        search_lower = contact_search_term.lower()
-        for index in range(contact_count):
-            contact = contact_items.nth(index)
-            name_locator = contact.locator(self.CONTACT_NAME_SELECTOR).first
-            expect(name_locator).to_be_visible(timeout=10000)
-            name = name_locator.inner_text().strip()
-            assert search_lower in name.lower(), (
-                f"Contact {index + 1} name '{name}' does not match search "
-                f"term '{contact_search_term}'."
-            )
-            print(f"Contact {index + 1}: {name}", flush=True)
-
-        print(
-            f"Contacts search for '{contact_search_term}' returned "
-            f"{contact_count} result(s).",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-    def _verify_contacts_tab_count_displayed(self, sidebar: Locator) -> None:
-        contacts_header = sidebar.locator(self.CONTACTS_HEADER_SELECTOR)
-        expect(contacts_header.locator("h3")).to_have_text(
-            self.CONTACTS_TAB_NAME,
-            timeout=15000,
-        )
-
-        count_label = contacts_header.locator("p").filter(
-            has_text=self.CONTACTS_COUNT_TEXT_PATTERN
-        )
-        expect(count_label).to_be_visible(timeout=15000)
-        count_text = count_label.inner_text().strip()
-        print(f"Contacts tab count label: {count_text}", flush=True)
-
-        match = re.search(r"Showing (\d+)", count_text, re.I)
-        assert match, (
-            f"Could not parse contact count from Contacts tab label '{count_text}'."
-        )
-        displayed_count = int(match.group(1))
-
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() >= displayed_count:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=10000)
-        assert contact_items.count() == displayed_count, (
-            "Contacts tab count label does not match displayed contact results. "
-            f"Label: {displayed_count}, displayed: {contact_items.count()}"
-        )
-
-        self.page.wait_for_timeout(3000)
-
-    def scroll_contacts_tab_to_end(self, sidebar: Locator) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > 0:
-                break
-            time.sleep(0.5)
-
-        expect(contact_items.first).to_be_visible(timeout=15000)
-        contact_count = contact_items.count()
-        assert contact_count >= 1, (
-            "Expected contacts before scrolling to the end of the Contacts tab."
-        )
-
-        scroll_before = self._read_contacts_scroll_metrics(sidebar)
-        print(
-            "Contacts tab scroll metrics before end scroll: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
-        )
-
-        if contact_count > 1:
-            contact_items.last.scroll_into_view_if_needed(timeout=15000)
-
-        self._scroll_contacts_container_to_end(sidebar)
-        self.page.wait_for_timeout(1000)
-
-        scroll_after = self._read_contacts_scroll_metrics(sidebar)
-        print(
-            "Contacts tab scroll metrics after end scroll: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
-        )
-
-    def _read_contacts_scroll_metrics(self, sidebar: Locator) -> dict[str, int]:
-        for selector in self.CONTACTS_SCROLL_CONTAINER_SELECTORS:
-            scroll_container = sidebar.locator(selector).first
-            if scroll_container.count() == 0:
-                                continue
-
-            metrics = self._read_scroll_container_metrics(scroll_container)
-            if metrics["scrollHeight"] > metrics["clientHeight"] + 1:
-                return metrics
-
-        return sidebar.locator(self.CONTACT_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
-                while (node) {
-                    if (node.scrollHeight > node.clientHeight + 1) {
-                        return {
-                            scrollTop: node.scrollTop,
-                            scrollHeight: node.scrollHeight,
-                            clientHeight: node.clientHeight,
-                        };
-                    }
-                    node = node.parentElement;
-                }
-                return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
-            }"""
-        )
-
-    def _scroll_contacts_container_to_end(self, sidebar: Locator) -> None:
-        for selector in self.CONTACTS_SCROLL_CONTAINER_SELECTORS:
-            scroll_container = sidebar.locator(selector).first
-            if scroll_container.count() == 0:
-                continue
-
-            metrics = self._read_scroll_container_metrics(scroll_container)
-            if metrics["scrollHeight"] <= metrics["clientHeight"] + 1:
-                continue
-
-            scroll_container.evaluate("node => { node.scrollTop = node.scrollHeight; }")
-            return
-
-        sidebar.locator(self.CONTACT_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
+        if not scrolled:
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                const anchor = root?.querySelector('.dakota-record-item');
+                if (!anchor) return;
+                let node = anchor.parentElement;
                 while (node) {
                     if (node.scrollHeight > node.clientHeight + 1) {
                         node.scrollTop = node.scrollHeight;
@@ -2600,38 +321,1474 @@ class DakotaSidebarPage(BasePage):
                     }
                     node = node.parentElement;
                 }
-            }"""
+                """
+            )
+
+    def _read_scroll_metrics(self, container_selectors: tuple[str, ...]) -> dict[str, int]:
+        metrics = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            const selectors = arguments[0];
+            const read = (node) => ({
+                scrollTop: node.scrollTop,
+                scrollHeight: node.scrollHeight,
+                clientHeight: node.clientHeight,
+            });
+            if (!root) return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+            for (const sel of selectors) {
+                const container = root.querySelector(sel);
+                if (container && container.scrollHeight > container.clientHeight + 1) {
+                    return read(container);
+                }
+            }
+            const anchor = root.querySelector('.dakota-record-item, .contacts-dakota-record-item, .dakota-investor-item');
+            if (!anchor) return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+            let node = anchor.parentElement;
+            while (node) {
+                if (node.scrollHeight > node.clientHeight + 1) return read(node);
+                node = node.parentElement;
+            }
+            return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+            """,
+            list(container_selectors),
+        )
+        return {
+            "scrollTop": int(metrics.get("scrollTop", 0)),
+            "scrollHeight": int(metrics.get("scrollHeight", 0)),
+            "clientHeight": int(metrics.get("clientHeight", 0)),
+        }
+
+    def _verify_scrolled_to_end(
+        self,
+        scroll_before: dict[str, int],
+        scroll_after: dict[str, int],
+        context: str,
+    ) -> None:
+        scroll_height = scroll_after["scrollHeight"]
+        client_height = scroll_after["clientHeight"]
+        scroll_top = scroll_after["scrollTop"]
+        if scroll_height <= client_height + 1:
+            print(f"{context}: list is not scrollable; already fully visible.", flush=True)
+            return
+        at_bottom = scroll_top + client_height >= scroll_height - 2
+        if not at_bottom:
+            pytest.fail(
+                f"{context} did not scroll to the end. "
+                f"scrollTop={scroll_top}, clientHeight={client_height}, "
+                f"scrollHeight={scroll_height}"
+            )
+        if scroll_top < scroll_before["scrollTop"]:
+            pytest.fail(
+                f"{context} scroll position moved upward unexpectedly. "
+                f"before={scroll_before['scrollTop']}, after={scroll_top}"
+            )
+        print(f"{context} scrolled successfully to the end of the list.", flush=True)
+
+    # ------------------------------------------------------------------
+    # Setup / navigation
+    # ------------------------------------------------------------------
+
+    def is_sidebar_open(self) -> bool:
+        return auth_is_sidebar_open(self.driver)
+
+    def open_sidebar_if_closed(self) -> None:
+        if self.is_sidebar_open():
+            return
+        open_dakota_sidebar(self.driver, timeout=self.timeout)
+
+    def ensure_sidebar_ready(self) -> None:
+        from pages.dakota_auth import (
+            _extension_search_ready,
+            is_sidebar_open,
+            open_dakota_sidebar,
+            wait_for_extension_logged_in,
+            wait_for_extension_on_page,
         )
 
-    def _verify_contacts_tab_load_more_visibility(
-        self,
-        sidebar: Locator,
-        total_contacts: int,
-    ) -> None:
-        self.page.wait_for_timeout(3000)
-        load_more_button = sidebar.locator(self.CONTACTS_LOAD_MORE_BUTTON_SELECTOR)
+        if _extension_search_ready(self.driver):
+            if not is_sidebar_open(self.driver):
+                open_dakota_sidebar(self.driver, timeout=self.timeout)
+            return
 
-        if total_contacts > self.CONTACTS_PAGE_SIZE:
-            if load_more_button.count() == 0:
-                load_more_button = self._ensure_load_more_contacts_button_visible(
-                    sidebar
+        wait_for_extension_on_page(self.driver, timeout=self.timeout)
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            if _extension_search_ready(self.driver):
+                return
+            open_dakota_sidebar(self.driver, timeout=self.timeout)
+            time.sleep(0.5)
+        wait_for_extension_logged_in(self.driver, timeout=self.timeout)
+
+    def reset_for_test(self, credentials: DakotaCredentials | None = None) -> None:
+        from pages.dakota_auth import (
+            ensure_logged_in_on_portal,
+            is_sidebar_open,
+            open_dakota_sidebar,
+            wait_for_extension_logged_in,
+        )
+        from utils.credentials import load_dakota_credentials
+
+        with allure_step(self.driver, "Reset browser state for test"):
+            creds = credentials or self.credentials or load_dakota_credentials()
+            self.driver.get(DAKOTA_PORTAL_URL)
+            WebDriverWait(self.driver, self.timeout).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            self._wait_shadow()
+            ensure_logged_in_on_portal(self.driver, creds)
+            if not is_sidebar_open(self.driver):
+                open_dakota_sidebar(self.driver, timeout=self.timeout)
+            wait_for_extension_logged_in(self.driver, timeout=self.timeout)
+
+    def search_and_verify_results(self, search_term: str) -> None:
+        with allure_step(self.driver, f"Search for '{search_term}' in the Dakota sidebar"):
+            self.ensure_sidebar_ready()
+            timing = self.search_company(search_term)
+            assert timing.result_count >= 1, (
+                f"Expected at least one search result for '{search_term}', got 0."
+            )
+        with allure_step(self.driver, "Verify search results are displayed in the sidebar"):
+            self._verify_search_results_visible(search_term)
+
+    def _verify_search_results_visible(self, search_term: str) -> None:
+        self._wait_visible(self.SEARCH_RESULT_ITEM_SELECTOR)
+        count = self._query_count(self.SEARCH_RESULT_ITEM_SELECTOR)
+        assert count >= 1, f"Expected at least one search result for '{search_term}', got 0."
+        self._wait_visible(self.SEARCH_RESULT_NAME_SELECTOR)
+
+    def scroll_search_results_to_end(self, search_term: str) -> None:
+        with allure_step(self.driver, "Scroll search results to the end of the list"):
+            self._wait_visible(self.SEARCH_RESULT_ITEM_SELECTOR)
+            result_count = self._query_count(self.SEARCH_RESULT_ITEM_SELECTOR)
+            assert result_count >= 1, f"Expected search results before scrolling for '{search_term}'."
+            scroll_before = self._read_scroll_metrics((".dakota-sidebar-body", ".dakota-loggedin-body"))
+            if result_count > 1:
+                self._js(
+                    """
+                    const root = document.getElementById('crxjs-app')?.shadowRoot;
+                    const items = root?.querySelectorAll('.dakota-record-item') || [];
+                    if (items.length) items[items.length - 1].scrollIntoView({ block: 'end' });
+                    """
                 )
-            else:
-                load_more_button = load_more_button.first
-                load_more_button.scroll_into_view_if_needed(timeout=5000)
+            self._scroll_shadow_container_to_end((".dakota-sidebar-body", ".dakota-loggedin-body"))
+            scroll_after = self._read_scroll_metrics((".dakota-sidebar-body", ".dakota-loggedin-body"))
+        with allure_step(self.driver, "Verify search results scrolled to the end"):
+            self._verify_scrolled_to_end(scroll_before, scroll_after, "Search results")
 
-            expect(load_more_button).to_be_visible(timeout=15000)
+    def load_more_search_results(self, search_term: str) -> None:
+        with allure_step(self.driver, 'Click "Load more" to fetch additional search results'):
+            count_before = self._query_count(self.SEARCH_RESULT_ITEM_SELECTOR)
+            assert count_before >= 1, f"Expected search results before Load more for '{search_term}'."
+            self.scroll_and_click_load_more()
+            count_after = self._query_count(self.SEARCH_RESULT_ITEM_SELECTOR)
+            assert count_after > count_before, (
+                f'Expected more results after clicking "Load more" for '
+                f"'{search_term}', but count stayed at {count_after}."
+            )
+
+    def open_first_search_result(self) -> None:
+        with allure_step(self.driver, "Open the first search result"):
+            self._wait_visible(self.SEARCH_RESULT_ITEM_SELECTOR)
+            self.click_first_search_result()
+            self.wait_for_company_detail()
+            self._ensure_general_tab_visible()
+
+    def open_search_result_for_tab(self, expected_tab: str) -> tuple[str, str]:
+        """Open a search result whose company type maps to the expected profile tab."""
+        from utils.company_types import profile_tab_for_company_type
+
+        with allure_step(self.driver, f"Open search result for tab '{expected_tab}'"):
+            self._wait_visible(self.SEARCH_RESULT_ITEM_SELECTOR)
+            results = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return [];
+                return Array.from(root.querySelectorAll('.dakota-record-item')).map((item) => {
+                    const name = item.querySelector('.dakota-record-name, .dakota-record-title');
+                    const typeEl = item.querySelector(
+                        '.dakota-record-type p, .dakota-record-type'
+                    );
+                    return {
+                        name: (name?.textContent || '').trim(),
+                        type: (typeEl?.textContent || '').trim(),
+                    };
+                });
+                """
+            )
+            assert results, "No search results found to open."
+
+            for index, row in enumerate(results):
+                ctype = row.get("type", "")
+                if profile_tab_for_company_type(ctype) != expected_tab:
+                    continue
+                clicked = self._js(
+                    """
+                    const root = document.getElementById('crxjs-app')?.shadowRoot;
+                    const items = root?.querySelectorAll('.dakota-record-item') || [];
+                    const item = items[arguments[0]];
+                    if (!item) return false;
+                    item.click();
+                    return true;
+                    """,
+                    index,
+                )
+                if not clicked:
+                    continue
+                name = row.get("name", "")
+                self.wait_for_company_detail()
+                self._ensure_general_tab_visible()
+                print(
+                    f"Opened '{name}' ({ctype}) for tab '{expected_tab}'.",
+                    flush=True,
+                )
+                return name, ctype
+
+            available = ", ".join(
+                f"{r.get('name', '?')} [{r.get('type', '?')}]" for r in results[:5]
+            )
+            pytest.fail(
+                f"No search result maps to tab '{expected_tab}'. "
+                f"Results: {available}"
+            )
+
+    def _ensure_general_tab_visible(self) -> None:
+        """Company detail defaults to General; scroll stats into view after load."""
+        self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            const body = root?.querySelector('.dakota-sidebar-body, .dakota-loggedin-body');
+            if (body) body.scrollTop = 0;
+            const grid = root?.querySelector('.dakota-stats-grid');
+            if (grid) grid.scrollIntoView({ block: 'start' });
+            """
+        )
+        time.sleep(0.5)
+
+    def open_allocator_search_result(self) -> None:
+        self._open_search_result_by_types(self.ALLOCATOR_RECORD_TYPE_LABEL)
+
+    def _open_search_result_by_types(self, *type_labels: str) -> None:
+        with allure_step(self.driver, f"Open search result with type {type_labels!r}"):
+            self._wait_visible(self.SEARCH_RESULT_ITEM_SELECTOR)
+            normalized = [label.strip().casefold() for label in type_labels]
+            clicked = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return false;
+                const targets = arguments[0];
+                const items = root.querySelectorAll('.dakota-record-item');
+                for (const item of items) {
+                    const typeEl = item.querySelector(
+                        '.dakota-record-type p, .dakota-record-type'
+                    );
+                    const typeText = (typeEl?.textContent || '').trim().toLowerCase();
+                    if (!targets.includes(typeText)) continue;
+                    item.click();
+                    return true;
+                }
+                return false;
+                """,
+                normalized,
+            )
+            if not clicked:
+                pytest.fail(
+                    f"No search result found for type(s) {type_labels!r}."
+                )
+            self.wait_for_company_detail()
+            self._ensure_general_tab_visible()
+
+    def open_search_result_and_verify_company_details(self, search_term: str) -> None:
+        self.open_first_search_result()
+        with allure_step(self.driver, "Verify company details content is displayed"):
+            self._verify_company_details_content_displayed(search_term)
+
+    def _verify_company_details_content_displayed(self, search_term: str) -> None:
+        def _has_content(_driver):
+            length = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return 0;
+                const sidebar = root.querySelector('.dakota-sidebar-container.open');
+                return sidebar ? (sidebar.innerText || '').trim().length : 0;
+                """
+            )
+            return length if length and length >= 30 else None
+
+        try:
+            WebDriverWait(self.driver, self.timeout).until(_has_content)
+        except TimeoutException:
+            pytest.fail(
+                "No company details content was displayed in the sidebar after "
+                f"opening a search result for '{search_term}'."
+            )
+
+    # ------------------------------------------------------------------
+    # LinkedIn / external page
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_linkedin_url(url: str) -> bool:
+        return "linkedin.com" in url.lower()
+
+    @staticmethod
+    def _is_linkedin_authwall(url: str) -> bool:
+        return "linkedin.com/authwall" in url.lower()
+
+    def _clear_linkedin_cookies(self) -> None:
+        cookies = self.driver.get_cookies()
+        for cookie in cookies:
+            if "linkedin.com" in cookie.get("domain", "").lower():
+                self.driver.delete_cookie(cookie["name"])
+
+    @staticmethod
+    def _extract_session_redirect(url: str) -> str | None:
+        params = parse_qs(urlparse(url).query)
+        redirects = params.get("sessionRedirect", [])
+        if not redirects:
+            return None
+        return unquote(redirects[0])
+
+    def _dismiss_linkedin_prompts(self) -> None:
+        if "linkedin.com" not in self.driver.current_url.lower():
+            return
+        selectors = [
+            "button[aria-label='Dismiss']",
+            "button.artdeco-modal__dismiss",
+        ]
+        for css in selectors:
+            try:
+                buttons = self.driver.find_elements(By.CSS_SELECTOR, css)
+                for btn in buttons:
+                    if btn.is_displayed():
+                        btn.click()
+                        time.sleep(0.5)
+                        return
+            except Exception:
+                continue
+
+    def _open_linkedin_public_page(self, target_url: str) -> None:
+        normalized_target = target_url.rstrip("/")
+        self._clear_linkedin_cookies()
+        self.driver.get(target_url)
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
+        )
+        time.sleep(SEARCH_DEBOUNCE_SEC)
+        self._dismiss_linkedin_prompts()
+
+        if self._is_linkedin_authwall(self.driver.current_url):
+            redirect_target = self._extract_session_redirect(self.driver.current_url) or target_url
+            self._clear_linkedin_cookies()
+            self.driver.get(redirect_target)
+            WebDriverWait(self.driver, self.timeout).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(SEARCH_DEBOUNCE_SEC)
+            self._dismiss_linkedin_prompts()
+
+        if self._is_linkedin_authwall(self.driver.current_url):
+            pytest.fail(
+                "LinkedIn redirected to the authentication wall instead of the public "
+                f"company page. Target URL: {target_url}."
+            )
+
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: re.search(
+                re.escape(normalized_target) + r"/?", d.current_url, re.I
+            )
+        )
+
+    def open_external_page_and_sidebar(self, page_url: str) -> None:
+        normalized_url = page_url.rstrip("/")
+        with allure_step(self.driver, f"Open external page: {page_url}"):
+            if self._is_linkedin_url(page_url):
+                self._open_linkedin_public_page(page_url)
+            else:
+                self.driver.get(page_url)
+                WebDriverWait(self.driver, self.timeout).until(
+                    lambda d: re.search(
+                        re.escape(normalized_url) + r"/?", d.current_url, re.I
+                    )
+                )
+        with allure_step(self.driver, "Open Dakota sidebar via floating button"):
+            wait_for_extension_on_page(self.driver, timeout=self.timeout)
+            open_dakota_sidebar(self.driver, timeout=self.timeout)
+
+    @staticmethod
+    def _normalize_url_for_search_prefill(url: str) -> str:
+        normalized = url.strip()
+        normalized = re.sub(r"^https?://", "", normalized, flags=re.I)
+        normalized = re.sub(r"^www\.", "", normalized, flags=re.I)
+        return normalized.rstrip("/")
+
+    def verify_sidebar_prefilled_search_and_results(self, page_url: str) -> None:
+        expected_prefill = self._normalize_url_for_search_prefill(page_url)
+        with allure_step(
+            self.driver,
+            f"Verify sidebar search bar is prefilled with '{expected_prefill}'",
+        ):
+            self.ensure_sidebar_ready()
+            self._wait_for_search_bar_url(page_url)
+            actual_value = self._get_search_input_value()
+            print(
+                f"Sidebar search bar value: '{actual_value}' (expected '{expected_prefill}')",
+                flush=True,
+            )
+        with allure_step(self.driver, f"Verify search results for '{expected_prefill}'"):
+            self._verify_search_results_visible(expected_prefill)
+
+    def _get_search_input_value(self) -> str:
+        for selector in self.SEARCH_BAR_SELECTORS:
+            value = self._query_input_value(selector.split(",")[0].strip())
+            if value:
+                return value
+        return self._query_input_value("#company-search")
+
+    def _wait_for_search_bar_url(self, page_url: str, timeout_s: float | None = None) -> None:
+        wait = timeout_s if timeout_s is not None else self.timeout
+        expected = self._normalize_url_for_search_prefill(page_url)
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            actual = self._get_search_input_value()
+            if self._normalize_url_for_search_prefill(actual) == expected:
+                return
+            time.sleep(0.5)
+        actual = self._get_search_input_value()
+        pytest.fail(
+            "Sidebar search bar was not prefilled with the expected page URL. "
+            f"Expected '{expected}', got '{actual}'."
+        )
+
+
+    # ------------------------------------------------------------------
+    # General tab verifications
+    # ------------------------------------------------------------------
+
+    def _get_general_tab_stat_value(self, label: str) -> str:
+        value = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const target = arguments[0].trim().toLowerCase();
+            const items = root.querySelectorAll('.dakota-stat-item');
+            for (const item of items) {
+                const lbl = item.querySelector('.dakota-stat-label');
+                const labelText = (lbl?.textContent || item.textContent || '').trim().toLowerCase();
+                if (!labelText.includes(target) && !(target === 'contacts' && labelText.includes('contact'))) {
+                    continue;
+                }
+                item.scrollIntoView({ block: 'center' });
+                const num = item.querySelector('.dakota-stat-number');
+                return num ? (num.textContent || '').trim() : '';
+            }
+            return '';
+            """,
+            label,
+        )
+        if not value:
+            pytest.fail(f"Expected a displayed count for {label}.")
+        return str(value)
+
+    def _get_general_tab_info_value(self, label: str) -> str:
+        value = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const labels = root.querySelectorAll('.dakota-info-label');
+            for (const lbl of labels) {
+                if ((lbl.textContent || '').trim() === arguments[0]) {
+                    const val = lbl.nextElementSibling;
+                    if (val && val.classList.contains('dakota-info-value')) {
+                        return (val.textContent || '').trim();
+                    }
+                    const parent = lbl.parentElement;
+                    const valueEl = parent?.querySelector('.dakota-info-value');
+                    return valueEl ? (valueEl.textContent || '').trim() : '';
+                }
+            }
+            return '';
+            """,
+            label,
+        )
+        return str(value or "")
+
+    def _ensure_general_tab_info_label_visible(self, label: str) -> None:
+        self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return;
+            const labels = root.querySelectorAll('.dakota-info-label');
+            let target = null;
+            for (const lbl of labels) {
+                if ((lbl.textContent || '').trim() === arguments[0]) {
+                    target = lbl;
+                    break;
+                }
+            }
+            if (!target) return;
+            const isScrollable = (el) => {
+                const style = window.getComputedStyle(el);
+                return (style.overflowY === 'auto' || style.overflowY === 'scroll')
+                    && el.scrollHeight > el.clientHeight + 1;
+            };
+            for (let i = 0; i < 60; i++) {
+                target.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const rect = target.getBoundingClientRect();
+                let container = target.parentElement;
+                while (container) {
+                    if (isScrollable(container)) {
+                        const cRect = container.getBoundingClientRect();
+                        if (rect.top >= cRect.top && rect.bottom <= cRect.bottom) return;
+                        if (rect.bottom > cRect.bottom) {
+                            container.scrollTop += rect.bottom - cRect.bottom + 24;
+                        } else {
+                            container.scrollTop += 300;
+                        }
+                        break;
+                    }
+                    container = container.parentElement;
+                }
+            }
+            """,
+            label,
+        )
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: bool(self._get_general_tab_info_value(label))
+            or self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                const labels = root?.querySelectorAll('.dakota-info-label') || [];
+                for (const lbl of labels) {
+                    if ((lbl.textContent || '').trim() === arguments[0]) {
+                        const rect = lbl.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0;
+                    }
+                }
+                return false;
+                """,
+                label,
+            )
+        )
+
+    def verify_general_tab_stat_cards(self) -> None:
+        with allure_step(self.driver, "Verify General tab stat cards are displayed"):
+            self._wait_visible(self.STATS_GRID_SELECTOR)
+            for label in self.GENERAL_TAB_STAT_LABELS:
+                stat_value = self._get_general_tab_stat_value(label)
+                assert stat_value, f"Expected a displayed count for {label}."
+                print(f"General tab {label}: {stat_value}", flush=True)
+
+    def verify_general_tab_account_overview(self) -> None:
+        with allure_step(self.driver, "Verify Account Overview heading is displayed"):
+            self._wait_visible("h3")
+            headings = self._query_all_texts("h3")
+            assert any("Account Overview" in h for h in headings), (
+                "Account Overview heading not found."
+            )
+        with allure_step(self.driver, "Verify Account Overview content is displayed"):
+            content = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return '';
+                const headings = root.querySelectorAll('h3');
+                for (const h of headings) {
+                    if (/Account Overview/i.test(h.textContent || '')) {
+                        let sib = h.nextElementSibling;
+                        while (sib) {
+                            if (sib.tagName === 'P') return (sib.textContent || '').trim();
+                            sib = sib.nextElementSibling;
+                        }
+                    }
+                }
+                return '';
+                """
+            )
+            content_text = str(content or "").strip()
+            assert len(content_text) >= 20, (
+                "Account Overview section did not display meaningful content."
+            )
+            print(f"Account Overview displayed ({len(content_text)} characters)", flush=True)
+
+    def verify_general_tab_type(self) -> None:
+        with allure_step(self.driver, "Verify Type label is displayed on General tab"):
+            self._wait_visible(self.INFO_LABEL_SELECTOR)
+        with allure_step(self.driver, "Verify Type value is displayed on General tab"):
+            type_value = self._get_general_tab_info_value(self.TYPE_LABEL)
+            assert type_value, "Expected a displayed Type value on the General tab."
+            print(f"General tab Type: {type_value}", flush=True)
+
+    def verify_general_tab_metro_area(self) -> None:
+        with allure_step(self.driver, "Verify Metro Area label is displayed on General tab"):
+            self._wait_visible(self.INFO_LABEL_SELECTOR)
+        with allure_step(self.driver, "Verify Metro Area value is displayed on General tab"):
+            value = self._get_general_tab_info_value(self.METRO_AREA_LABEL)
+            assert value, "Expected a displayed Metro Area value on the General tab."
+            print(f"General tab Metro Area: {value}", flush=True)
+
+    def verify_general_tab_website(self) -> None:
+        with allure_step(self.driver, "Scroll General tab until Website is visible"):
+            self._ensure_general_tab_info_label_visible(self.WEBSITE_LABEL)
+        with allure_step(self.driver, "Verify Website value is displayed on General tab"):
+            value = self._get_general_tab_info_value(self.WEBSITE_LABEL)
+            assert value, "Expected a displayed Website value on the General tab."
+            print(f"General tab Website: {value}", flush=True)
+
+    def verify_general_tab_linkedin_url(self) -> None:
+        with allure_step(self.driver, "Scroll General tab until LinkedIn Url is visible"):
+            self._ensure_general_tab_info_label_visible(self.LINKEDIN_URL_LABEL)
+        with allure_step(self.driver, "Verify LinkedIn Url value is displayed on General tab"):
+            value = self._get_general_tab_info_value(self.LINKEDIN_URL_LABEL)
+            assert value, "Expected a displayed LinkedIn Url value on the General tab."
+            print(f"General tab LinkedIn Url: {value}", flush=True)
+
+    def verify_general_tab_billing_address(self) -> None:
+        with allure_step(self.driver, "Scroll General tab until Billing Address is visible"):
+            self._ensure_general_tab_info_label_visible(self.BILLING_ADDRESS_LABEL)
+        with allure_step(self.driver, "Verify Billing Address value is displayed on General tab"):
+            value = self._get_general_tab_info_value(self.BILLING_ADDRESS_LABEL)
+            assert value, "Expected a displayed Billing Address value on the General tab."
+            print(f"General tab Billing Address: {value}", flush=True)
+
+    def _parse_contacts_stat_count(self, value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized == "N/A":
+            pytest.fail(
+                "General tab Contacts count is N/A; cannot compare with Contacts tab."
+            )
+        digits = re.sub(r"[^0-9]", "", value)
+        if not digits:
+            pytest.fail(f"Could not parse Contacts count from General tab value '{value}'.")
+        return int(digits)
+
+    # ------------------------------------------------------------------
+    # Investors tab
+    # ------------------------------------------------------------------
+
+    def _open_investors_tab(self) -> None:
+        self.click_tab_by_name(self.INVESTORS_TAB_NAME)
+        self.wait_for_investors_tab_ready()
+        print(f"Navigated to {self.INVESTORS_TAB_NAME} tab.", flush=True)
+
+    def verify_company_investors_tab(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+
+    def verify_investors_tab_results(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+        with allure_step(self.driver, "Verify Investors tab displays results or empty state"):
+            self._verify_investors_tab_content_displayed()
+
+    def _verify_investors_tab_content_displayed(self) -> None:
+        def _ready(_driver):
+            if self._query_count(self.INVESTOR_ITEM_SELECTOR) > 0:
+                return True
+            texts = self._query_all_texts(".dakota-no-results p")
+            return any(self.INVESTORS_NO_RESULTS_TEXT.lower() in t.lower() for t in texts)
+
+        WebDriverWait(self.driver, self.timeout).until(_ready)
+        if self._query_count(self.INVESTOR_ITEM_SELECTOR) == 0:
+            print(
+                f"Investors tab displayed empty state: {self.INVESTORS_NO_RESULTS_TEXT}",
+                flush=True,
+            )
+        else:
+            count = self._query_count(self.INVESTOR_ITEM_SELECTOR)
+            print(f"Investors tab displayed {count} investor result(s).", flush=True)
+
+    def verify_investors_tab_investor_count(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+        with allure_step(self.driver, "Verify Investors tab shows number of investors displayed"):
+            self._verify_investors_tab_count_displayed()
+
+    def _verify_investors_tab_count_displayed(self) -> None:
+        header_text = self._query_text(self.INVESTORS_HEADER_SELECTOR)
+        assert self.INVESTORS_TAB_NAME in header_text, "Investors header not found."
+        match = re.search(r"Showing (\d+)", header_text, re.I)
+        assert match, f"Could not parse investor count from '{header_text}'."
+        displayed_count = int(match.group(1))
+        print(f"Investors tab count label: {header_text}", flush=True)
+        self._wait_visible(self.INVESTOR_ITEM_SELECTOR)
+        assert self._query_count(self.INVESTOR_ITEM_SELECTOR) == displayed_count, (
+            "Investors tab count label does not match displayed investor results."
+        )
+
+    def verify_investors_tab_load_more_button(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+        with allure_step(self.driver, "Scroll Investors tab until Load More Investors is visible"):
+            self._ensure_load_more_investors_button_visible()
+            print(f"{self.LOAD_MORE_INVESTORS_BUTTON_TEXT} button is visible.", flush=True)
+
+    def verify_investors_tab_load_more_displays_more(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+        with allure_step(self.driver, "Scroll Investors tab until Load More Investors is visible"):
+            self._ensure_load_more_investors_button_visible()
+        with allure_step(self.driver, 'Click "Load More Investors" to fetch additional investors'):
+            self._load_more_investors()
+        with allure_step(self.driver, "Scroll Investors tab to the end of the list"):
+            self.scroll_investors_tab_to_end()
+
+    def verify_investors_tab_investor_metro_areas(self) -> None:
+        with allure_step(self.driver, "Verify Investors tab is displayed"):
+            self._wait_visible(self.INVESTORS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investors tab"):
+            self._open_investors_tab()
+        with allure_step(self.driver, "Scroll Investors tab until Load More Investors is visible"):
+            self._ensure_load_more_investors_button_visible()
+        with allure_step(self.driver, "Verify all investors on the page display a state/city"):
+            self._verify_investors_metro_areas_displayed()
+
+    def _verify_investors_metro_areas_displayed(self) -> None:
+        self._wait_visible(self.INVESTOR_ITEM_SELECTOR)
+        metros = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.dakota-investor-item')).map(item => {
+                const metro = item.querySelector('.dakota-investor-details .dakota-investor-metro, .dakota-investor-metro');
+                return metro ? (metro.textContent || '').trim() : '';
+            });
+            """
+        )
+        assert metros and len(metros) >= 1, (
+            "Expected at least one investor to verify state/city display."
+        )
+        for index, metro_text in enumerate(metros, start=1):
+            assert metro_text, f"Investor {index} of {len(metros)} is missing a state/city."
+            print(f"Investor {index} state/city: {metro_text}", flush=True)
+        print(f"All {len(metros)} investor(s) display a state/city.", flush=True)
+
+    def _load_more_investors_button_visible(self) -> bool:
+        return bool(
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return false;
+                const buttons = root.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (/load more investors/i.test((btn.textContent || '').trim())) {
+                        return btn.offsetParent !== null;
+                    }
+                }
+                return false;
+                """
+            )
+        )
+
+    def _ensure_load_more_investors_button_visible(self) -> None:
+        for _ in range(60):
+            if self._load_more_investors_button_visible():
+                return
+            self._scroll_shadow_container_to_end(self.INVESTORS_SCROLL_CONTAINER_SELECTORS)
+            time.sleep(0.2)
+        if not self._load_more_investors_button_visible():
+            pytest.fail(
+                f"{self.LOAD_MORE_INVESTORS_BUTTON_TEXT} button is not visible "
+                "in the Investors tab viewport after scrolling."
+            )
+
+    def _load_more_investors(self) -> None:
+        count_before = self._query_count(self.INVESTOR_ITEM_SELECTOR)
+        assert count_before >= 1, (
+            f"Expected investors before {self.LOAD_MORE_INVESTORS_BUTTON_TEXT}."
+        )
+        for attempt in range(1, self.LOAD_MORE_INVESTORS_MAX_ATTEMPTS + 1):
+            self._ensure_load_more_investors_button_visible()
+            clicked = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return false;
+                const buttons = root.querySelectorAll('button');
+                for (const btn of buttons) {
+                    if (/load more investors/i.test((btn.textContent || '').trim())) {
+                        btn.scrollIntoView({ block: 'center' });
+                        btn.click();
+                        return true;
+                    }
+                }
+                return false;
+                """
+            )
+            if not clicked:
+                if attempt == self.LOAD_MORE_INVESTORS_MAX_ATTEMPTS:
+                    pytest.fail(f"{self.LOAD_MORE_INVESTORS_BUTTON_TEXT} button not found.")
+                continue
+
+            try:
+                WebDriverWait(self.driver, self.timeout).until(
+                    lambda d: self._query_count(self.INVESTOR_ITEM_SELECTOR) > count_before
+                )
+                return
+            except TimeoutException:
+                if attempt == self.LOAD_MORE_INVESTORS_MAX_ATTEMPTS:
+                    raise
+                # Sometimes the first click is swallowed by the UI while list rerenders.
+                self._scroll_shadow_container_to_end(self.INVESTORS_SCROLL_CONTAINER_SELECTORS)
+                time.sleep(0.8)
+
+    def scroll_investors_tab_to_end(self) -> None:
+        self._wait_visible(self.INVESTOR_ITEM_SELECTOR)
+        count = self._query_count(self.INVESTOR_ITEM_SELECTOR)
+        assert count >= 1, "Expected investors before scrolling Investors tab."
+        scroll_before = self._read_scroll_metrics(self.INVESTORS_SCROLL_CONTAINER_SELECTORS)
+        if count > 1:
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                const items = root?.querySelectorAll('.dakota-investor-item') || [];
+                if (items.length) items[items.length - 1].scrollIntoView({ block: 'end' });
+                """
+            )
+        self._scroll_shadow_container_to_end(self.INVESTORS_SCROLL_CONTAINER_SELECTORS)
+        scroll_after = self._read_scroll_metrics(self.INVESTORS_SCROLL_CONTAINER_SELECTORS)
+        self._verify_scrolled_to_end(scroll_before, scroll_after, "Investors tab")
+
+    # ------------------------------------------------------------------
+    # Investment details tab
+    # ------------------------------------------------------------------
+
+    def _open_investment_details_tab(self) -> None:
+        self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        self._click_shadow('a.dakota-tab-button[href*="/investment-details"]')
+        time.sleep(1.5)
+        print(f"Navigated to {self.INVESTMENT_DETAILS_TAB_NAME} tab.", flush=True)
+
+    def verify_company_investment_details_tab(self) -> None:
+        with allure_step(self.driver, "Verify Investment Details tab is displayed"):
+            self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investment Details tab"):
+            self._open_investment_details_tab()
+
+    def verify_investment_details_tab_details(self) -> None:
+        with allure_step(self.driver, "Verify Investment Details tab is displayed"):
+            self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investment Details tab"):
+            self._open_investment_details_tab()
+        with allure_step(self.driver, "Verify Investment Details tab displays data or empty state"):
+            self._verify_investment_details_tab_content_displayed()
+
+    def _verify_investment_details_tab_content_displayed(self) -> None:
+        def _ready(_driver):
+            if self._query_count(self.INVESTMENT_DETAILS_ITEM_SELECTOR) > 0:
+                return True
+            texts = self._query_all_texts(".dakota-no-content p")
+            return any(
+                self.INVESTMENT_DETAILS_NO_CONTENT_TEXT.lower() in t.lower() for t in texts
+            )
+
+        WebDriverWait(self.driver, self.timeout).until(_ready)
+        if self._query_count(self.INVESTMENT_DETAILS_ITEM_SELECTOR) == 0:
+            print(
+                "Investment Details tab displayed empty state: "
+                f"{self.INVESTMENT_DETAILS_NO_CONTENT_TEXT}",
+                flush=True,
+            )
+        else:
+            count = self._query_count(self.INVESTMENT_DETAILS_ITEM_SELECTOR)
+            print(f"Investment Details tab displayed {count} detail item(s).", flush=True)
+
+    def _verify_investment_details_field(self, label: str) -> None:
+        text = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const items = root.querySelectorAll('.dakota-investment-details-item');
+            for (const item of items) {
+                const h3 = item.querySelector('h3');
+                if ((h3?.textContent || '').trim() === arguments[0]) {
+                    const desc = item.querySelector('.dakota-investment-description');
+                    return desc ? (desc.textContent || '').trim() : '';
+                }
+            }
+            return '';
+            """,
+            label,
+        )
+        assert text, f"Expected a displayed {label} value on the Investment Details tab."
+        print(f"Investment Details {label}: {text}", flush=True)
+
+    def verify_investment_details_tab_geography(self) -> None:
+        with allure_step(self.driver, "Verify Investment Details tab is displayed"):
+            self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investment Details tab"):
+            self._open_investment_details_tab()
+        with allure_step(self.driver, "Verify Investment Details tab displays Geography"):
+            self._verify_investment_details_field(self.INVESTMENT_DETAILS_GEOGRAPHY_LABEL)
+
+    def verify_investment_details_tab_industry(self) -> None:
+        with allure_step(self.driver, "Verify Investment Details tab is displayed"):
+            self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investment Details tab"):
+            self._open_investment_details_tab()
+        with allure_step(self.driver, "Verify Investment Details tab displays Industry"):
+            self._verify_investment_details_field(self.INVESTMENT_DETAILS_INDUSTRY_LABEL)
+
+    def verify_investment_details_tab_check_size(self) -> None:
+        with allure_step(self.driver, "Verify Investment Details tab is displayed"):
+            self._wait_visible(self.INVESTMENT_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Investment Details tab"):
+            self._open_investment_details_tab()
+        with allure_step(self.driver, "Verify Investment Details tab displays Check Size"):
+            self._verify_investment_details_field(self.INVESTMENT_DETAILS_CHECK_SIZE_LABEL)
+
+    # ------------------------------------------------------------------
+    # Platform details tab
+    # ------------------------------------------------------------------
+
+    def _open_platform_details_tab(self) -> None:
+        self._wait_visible(self.PLATFORM_DETAILS_TAB_SELECTOR)
+        self._click_shadow('a.dakota-tab-button[href*="/platform-details"]')
+        time.sleep(1.5)
+        print(f"Navigated to {self.PLATFORM_DETAILS_TAB_NAME} tab.", flush=True)
+
+    def verify_company_platform_details_tab(self) -> None:
+        with allure_step(self.driver, "Verify Platform Details tab is displayed"):
+            self._wait_visible(self.PLATFORM_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Platform Details tab"):
+            self._open_platform_details_tab()
+
+    def verify_platform_details_tab_platform_description(self) -> None:
+        with allure_step(self.driver, "Verify Platform Details tab is displayed"):
+            self._wait_visible(self.PLATFORM_DETAILS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Platform Details tab"):
+            self._open_platform_details_tab()
+        with allure_step(self.driver, "Verify Platform Details tab displays Platform Description"):
+            text = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return '';
+                const items = root.querySelectorAll('.dakota-platform-info-item');
+                for (const item of items) {
+                    const h3 = item.querySelector('h3');
+                    if ((h3?.textContent || '').trim() === arguments[0]) {
+                        const desc = item.querySelector('.dakota-platform-description');
+                        return desc ? (desc.textContent || '').trim() : '';
+                    }
+                }
+                return '';
+                """,
+                self.PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL,
+            )
+            assert text, (
+                "Expected a displayed Platform Description value on the Platform Details tab."
+            )
+            print(
+                f"Platform Details {self.PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL}: {text}",
+                flush=True,
+            )
+
+    # ------------------------------------------------------------------
+    # Contacts tab
+    # ------------------------------------------------------------------
+
+    def _open_contacts_tab(self) -> None:
+        self.click_tab_by_name(self.CONTACTS_TAB_NAME)
+        self.wait_for_contacts_loaded()
+        print(f"Navigated to {self.CONTACTS_TAB_NAME} tab.", flush=True)
+
+    def verify_contacts_tab_results(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify Contacts tab displays contacts or empty state"):
+            self._verify_contacts_tab_content_displayed()
+
+    def _verify_contacts_tab_content_displayed(self) -> None:
+        def _ready(_driver):
+            if self._query_count(self.CONTACT_ITEM_SELECTOR) > 0:
+                return True
+            texts = self._query_all_texts(".dakota-no-results p")
+            return any(self.CONTACTS_NO_RESULTS_TEXT.lower() in t.lower() for t in texts)
+
+        WebDriverWait(self.driver, self.timeout).until(_ready)
+        if self._query_count(self.CONTACT_ITEM_SELECTOR) == 0:
+            print(
+                f"Contacts tab displayed empty state: {self.CONTACTS_NO_RESULTS_TEXT}",
+                flush=True,
+            )
+        else:
+            count = self._query_count(self.CONTACT_ITEM_SELECTOR)
+            print(f"Contacts tab displayed {count} contact result(s).", flush=True)
+
+    def verify_contacts_tab_contact_roles(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify all contacts on the page display a role"):
+            self._verify_contacts_tab_roles_displayed()
+
+    def _verify_contacts_tab_roles_displayed(self) -> None:
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        roles = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.contacts-dakota-record-item')).map(item => {
+                const role = item.querySelector('.contacts-dakota-record-subDetails');
+                return role ? (role.textContent || '').trim() : '';
+            });
+            """
+        )
+        for index, role_text in enumerate(roles, start=1):
+            assert role_text, f"Contact {index} of {len(roles)} is missing a role."
+            print(f"Contact {index} role: {role_text}", flush=True)
+        print(f"All {len(roles)} contact(s) display a role.", flush=True)
+
+    def verify_contacts_tab_contact_urls(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify all contacts on the page display a URL"):
+            self._verify_contacts_tab_urls_displayed()
+
+    def _verify_contacts_tab_urls_displayed(self) -> None:
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        hrefs = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.contacts-dakota-record-item')).map(item => {
+                const link = item.querySelector('a.contacts-dakota-contact-link');
+                return link ? (link.getAttribute('href') || '').trim() : '';
+            });
+            """
+        )
+        for index, href in enumerate(hrefs, start=1):
+            assert href, f"Contact {index} of {len(hrefs)} is missing a URL href."
+            print(f"Contact {index} URL: {href}", flush=True)
+        print(f"All {len(hrefs)} contact(s) display a URL.", flush=True)
+
+    def verify_contacts_tab_contact_emails(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify all contacts on the page display an email address"):
+            self._verify_contacts_tab_emails_displayed()
+
+    def _verify_contacts_tab_emails_displayed(self) -> None:
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        emails = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.contacts-dakota-record-item')).map(item => {
+                const link = item.querySelector('.contacts-dakota-contact-email a.contacts-dakota-contact-link');
+                return {
+                    href: link ? (link.getAttribute('href') || '').trim() : '',
+                    text: link ? (link.textContent || '').trim() : '',
+                };
+            });
+            """
+        )
+        for index, email in enumerate(emails, start=1):
+            assert email["href"].lower().startswith("mailto:"), (
+                f"Contact {index} is missing a mailto email href."
+            )
+            assert email["text"], f"Contact {index} is missing email text."
+            print(f"Contact {index} email: {email['text']}", flush=True)
+        print(f"All {len(emails)} contact(s) display an email address.", flush=True)
+
+    def verify_contacts_tab_search_results(self, contact_search_term: str) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(
+            self.driver,
+            f"Search contacts for '{contact_search_term}' and verify results",
+        ):
+            self._search_contacts_and_verify_results(contact_search_term)
+
+    def _search_contacts_and_verify_results(self, contact_search_term: str) -> None:
+        self._wait_visible("#contact-search")
+        self._fill_shadow_input("#contact-search", contact_search_term)
+        time.sleep(SEARCH_DEBOUNCE_SEC)
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+            or any(
+                self.CONTACTS_NO_RESULTS_TEXT.lower() in t.lower()
+                for t in self._query_all_texts(".contacts-dakota-no-results p")
+            )
+        )
+        self._verify_contacts_search_results_displayed(contact_search_term)
+
+    def _verify_contacts_search_results_displayed(self, contact_search_term: str) -> None:
+        no_results = any(
+            self.CONTACTS_NO_RESULTS_TEXT.lower() in t.lower()
+            for t in self._query_all_texts(".contacts-dakota-no-results p")
+        )
+        if no_results:
+            pytest.fail(f"Contacts search for '{contact_search_term}' returned no results.")
+        count = self._query_count(self.CONTACT_ITEM_SELECTOR)
+        assert count >= 1, (
+            f"Expected contacts search for '{contact_search_term}' to return results."
+        )
+        names = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.contacts-dakota-record-name'))
+                .map(el => (el.textContent || '').trim());
+            """
+        )
+        search_lower = contact_search_term.lower()
+        for index, name in enumerate(names, start=1):
+            assert search_lower in name.lower(), (
+                f"Contact {index} name '{name}' does not match search term '{contact_search_term}'."
+            )
+            print(f"Contact {index}: {name}", flush=True)
+        print(
+            f"Contacts search for '{contact_search_term}' returned {count} result(s).",
+            flush=True,
+        )
+
+    def _open_first_contact_details(self) -> str:
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        name = self._query_text(self.CONTACT_NAME_SELECTOR)
+        assert name, "Expected the first contact to have a name before opening details."
+        self._click_shadow(self.CONTACT_ITEM_SELECTOR)
+        print(f"Clicked first contact: {name}", flush=True)
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._is_visible_in_shadow(self.CONTACT_DETAIL_PAGE_SELECTOR)
+        )
+        return name
+
+    def verify_contacts_tab_contact_details(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Click the first contact and verify details are displayed"):
+            contact_name = self._open_first_contact_details()
+            self._verify_contact_details_displayed(contact_name)
+
+    def _verify_contact_details_displayed(self, expected_contact_name: str) -> None:
+        self._wait_visible(self.CONTACT_DETAIL_PAGE_SELECTOR)
+        detail_name = self._query_text(self.CONTACT_DETAIL_NAME_SELECTOR)
+        assert detail_name, "Contact detail page name is empty."
+        assert detail_name.lower() == expected_contact_name.lower(), (
+            f"Contact detail name '{detail_name}' does not match '{expected_contact_name}'."
+        )
+        fields = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return [];
+            return Array.from(root.querySelectorAll('.contacts-dakota-detail-field')).map(field => {
+                const label = field.querySelector('.contacts-dakota-detail-field-label');
+                const value = field.querySelector('.contacts-dakota-detail-field-value');
+                return {
+                    label: label ? (label.textContent || '').trim() : '',
+                    value: value ? (value.textContent || '').trim() : '',
+                };
+            });
+            """
+        )
+        title_text = self._query_text(self.CONTACT_DETAIL_TITLE_SELECTOR)
+        populated = sum(1 for f in fields if f.get("label") and f.get("value"))
+        for field in fields:
+            if field.get("label") and field.get("value"):
+                print(f"Contact detail field: {field['label']} = {field['value']}", flush=True)
+        assert title_text or populated >= 1, (
+            f"Contact detail page for '{detail_name}' has no loaded data."
+        )
+        if title_text:
+            print(f"Contact detail title: {title_text}", flush=True)
+
+    def _verify_contact_detail_field(self, field_label: str) -> str:
+        self._wait_visible(self.CONTACT_DETAIL_PAGE_SELECTOR)
+        self._ensure_contact_detail_field_visible(field_label)
+        value = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return '';
+            const fields = root.querySelectorAll('.contacts-dakota-detail-field');
+            for (const field of fields) {
+                const label = field.querySelector('.contacts-dakota-detail-field-label');
+                if ((label?.textContent || '').trim() === arguments[0]) {
+                    const val = field.querySelector('.contacts-dakota-detail-field-value');
+                    return val ? (val.textContent || '').trim() : '';
+                }
+            }
+            return '';
+            """,
+            field_label,
+        )
+        assert value, f"{field_label} is displayed but has no value."
+        print(f"{field_label}: {value}", flush=True)
+        return str(value)
+
+    def _ensure_contact_detail_field_visible(self, field_label: str) -> None:
+        self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return;
+            const fields = root.querySelectorAll('.contacts-dakota-detail-field');
+            for (const field of fields) {
+                const label = field.querySelector('.contacts-dakota-detail-field-label');
+                if ((label?.textContent || '').trim() === arguments[0]) {
+                    field.scrollIntoView({ block: 'center', inline: 'nearest' });
+                    return;
+                }
+            }
+            """,
+            field_label,
+        )
+
+    def verify_contacts_tab_contact_type(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Click the first contact and verify Contact Type is displayed"):
+            self._open_first_contact_details()
+            self._verify_contact_detail_field(self.CONTACT_DETAIL_CONTACT_TYPE_LABEL)
+
+    def verify_contacts_tab_contact_metro_area(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Click the first contact and verify Metro Area is displayed"):
+            self._open_first_contact_details()
+            self._verify_contact_detail_field(self.CONTACT_DETAIL_METRO_AREA_LABEL)
+
+    def verify_contacts_tab_contact_phone(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Click the first contact and verify Phone is displayed"):
+            self._open_first_contact_details()
+            self._verify_contact_detail_field(self.CONTACT_DETAIL_PHONE_LABEL)
+            phone_href = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return '';
+                const fields = root.querySelectorAll('.contacts-dakota-detail-field');
+                for (const field of fields) {
+                    const label = field.querySelector('.contacts-dakota-detail-field-label');
+                    if ((label?.textContent || '').trim() === arguments[0]) {
+                        const link = field.querySelector('a.contacts-dakota-detail-field-link[href^="tel:"]');
+                        return link ? (link.getAttribute('href') || '').trim() : '';
+                    }
+                }
+                return '';
+                """,
+                self.CONTACT_DETAIL_PHONE_LABEL,
+            )
+            assert phone_href.lower().startswith("tel:"), (
+                f"{self.CONTACT_DETAIL_PHONE_LABEL} link is missing a tel: href."
+            )
+
+    def verify_contacts_tab_contact_detail_email(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Click the first contact and verify Email is displayed"):
+            self._open_first_contact_details()
+            self._verify_contact_detail_field(self.CONTACT_DETAIL_EMAIL_LABEL)
+            email_href = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return '';
+                const fields = root.querySelectorAll('.contacts-dakota-detail-field');
+                for (const field of fields) {
+                    const label = field.querySelector('.contacts-dakota-detail-field-label');
+                    if ((label?.textContent || '').trim() === arguments[0]) {
+                        const link = field.querySelector('a.contacts-dakota-detail-field-link[href^="mailto:"]');
+                        return link ? (link.getAttribute('href') || '').trim() : '';
+                    }
+                }
+                return '';
+                """,
+                self.CONTACT_DETAIL_EMAIL_LABEL,
+            )
+            assert email_href.lower().startswith("mailto:"), (
+                f"{self.CONTACT_DETAIL_EMAIL_LABEL} link is missing a mailto: href."
+            )
+
+    def verify_contacts_tab_contact_detail_linkedin_url(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(
+            self.driver,
+            "Click the first contact, scroll to LinkedIn URL if needed, and verify it is displayed",
+        ):
+            self._open_first_contact_details()
+            self._verify_contact_detail_field(self.CONTACT_DETAIL_LINKEDIN_URL_LABEL)
+            linkedin_href = self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return '';
+                const fields = root.querySelectorAll('.contacts-dakota-detail-field');
+                for (const field of fields) {
+                    const label = field.querySelector('.contacts-dakota-detail-field-label');
+                    if ((label?.textContent || '').trim() === arguments[0]) {
+                        const link = field.querySelector('a.contacts-dakota-detail-field-link');
+                        return link ? (link.getAttribute('href') || '').trim() : '';
+                    }
+                }
+                return '';
+                """,
+                self.CONTACT_DETAIL_LINKEDIN_URL_LABEL,
+            )
+            assert "linkedin.com" in linkedin_href.lower(), (
+                f"{self.CONTACT_DETAIL_LINKEDIN_URL_LABEL} link is missing a LinkedIn href."
+            )
+            print(f"{self.CONTACT_DETAIL_LINKEDIN_URL_LABEL}: {linkedin_href}", flush=True)
+
+    def verify_contacts_tab_go_back_to_contact_list(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Open the first contact details page"):
+            self._open_first_contact_details()
+        with allure_step(
+            self.driver,
+            f'Click "{self.CONTACT_DETAIL_BACK_BUTTON_TEXT}" and verify contacts list',
+        ):
+            self._go_back_to_contacts_list()
+            self._verify_contacts_list_displayed()
+
+    def _go_back_to_contacts_list(self) -> None:
+        self._wait_visible(self.CONTACT_DETAIL_PAGE_SELECTOR)
+        clicked = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            if (!root) return false;
+            const buttons = root.querySelectorAll('.contacts-dakota-detail-back-button');
+            for (const btn of buttons) {
+                if (/go back to contact list/i.test(btn.textContent || '')) {
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+            """
+        )
+        if not clicked:
+            pytest.fail(f'Could not click "{self.CONTACT_DETAIL_BACK_BUTTON_TEXT}".')
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: not self._is_visible_in_shadow(self.CONTACT_DETAIL_PAGE_SELECTOR)
+        )
+
+    def _verify_contacts_list_displayed(self) -> None:
+        self._wait_visible("#contact-search")
+        header = self._query_text(self.CONTACTS_HEADER_SELECTOR)
+        assert self.CONTACTS_TAB_NAME in header, "Contacts list header not displayed."
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        count = self._query_count(self.CONTACT_ITEM_SELECTOR)
+        print(f"Contacts list displayed {count} contact(s).", flush=True)
+
+    def verify_contacts_tab_contact_count(self) -> None:
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify Contacts tab shows number of results displayed"):
+            self._verify_contacts_tab_count_displayed()
+
+    def _verify_contacts_tab_count_displayed(self) -> None:
+        header_text = self._query_text(self.CONTACTS_HEADER_SELECTOR)
+        match = re.search(r"Showing (\d+)", header_text, re.I)
+        assert match, f"Could not parse contact count from '{header_text}'."
+        displayed_count = int(match.group(1))
+        print(f"Contacts tab count label: {header_text}", flush=True)
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= displayed_count
+        )
+        assert self._query_count(self.CONTACT_ITEM_SELECTOR) == displayed_count, (
+            "Contacts tab count label does not match displayed contact results."
+        )
+
+    def scroll_contacts_tab_to_end(self) -> None:
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
+        )
+        count = self._query_count(self.CONTACT_ITEM_SELECTOR)
+        scroll_before = self._read_scroll_metrics(self.CONTACTS_SCROLL_CONTAINER_SELECTORS)
+        if count > 1:
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                const items = root?.querySelectorAll('.contacts-dakota-record-item') || [];
+                if (items.length) items[items.length - 1].scrollIntoView({ block: 'end' });
+                """
+            )
+        self._scroll_shadow_container_to_end(self.CONTACTS_SCROLL_CONTAINER_SELECTORS)
+        scroll_after = self._read_scroll_metrics(self.CONTACTS_SCROLL_CONTAINER_SELECTORS)
+        print(
+            f"Contacts tab scroll: before={scroll_before}, after={scroll_after}",
+            flush=True,
+        )
+
+    def _contacts_load_more_visible(self) -> bool:
+        return bool(
+            self._js(
+                """
+                const root = document.getElementById('crxjs-app')?.shadowRoot;
+                if (!root) return false;
+                const btn = root.querySelector('button.contacts-dakota-load-more-button');
+                return !!(btn && btn.offsetParent !== null);
+                """
+            )
+        )
+
+    def _ensure_load_more_contacts_button_visible(self) -> None:
+        for _ in range(60):
+            if self._contacts_load_more_visible():
+                return
+            self._scroll_shadow_container_to_end(self.CONTACTS_SCROLL_CONTAINER_SELECTORS)
+            time.sleep(0.2)
+        if not self._contacts_load_more_visible():
+            pytest.fail(
+                f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button is not visible "
+                "in the Contacts tab viewport after scrolling."
+            )
+
+    def _verify_contacts_tab_load_more_visibility(self, total_contacts: int) -> None:
+        if total_contacts > self.CONTACTS_PAGE_SIZE:
+            self._ensure_load_more_contacts_button_visible()
             print(
                 f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button is visible for "
                 f"{total_contacts} contacts.",
                 flush=True,
             )
             return
-
-        assert load_more_button.count() == 0, (
+        assert not self._contacts_load_more_visible(), (
             f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button should not be displayed "
-            f"when the General tab shows {total_contacts} contacts, but the button "
-            "was found on the Contacts tab."
+            f"when the General tab shows {total_contacts} contacts."
         )
         print(
             f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button is not displayed for "
@@ -2639,994 +1796,314 @@ class DakotaSidebarPage(BasePage):
             flush=True,
         )
 
-    def _load_more_contacts_button(self, sidebar: Locator) -> Locator:
-        role_based = sidebar.get_by_role(
-            "button",
-            name=re.compile(re.escape(self.LOAD_MORE_CONTACTS_BUTTON_TEXT), re.I),
-        )
-        if role_based.count() > 0:
-            return role_based.first
-
-        return sidebar.locator(self.CONTACTS_LOAD_MORE_BUTTON_SELECTOR).filter(
-            has_text=re.compile(re.escape(self.LOAD_MORE_CONTACTS_BUTTON_TEXT), re.I)
-        ).first
-
-    def _ensure_load_more_contacts_button_visible(
-        self,
-        sidebar: Locator,
-    ) -> Locator:
-        load_more_button = self._load_more_contacts_button(sidebar)
-        expect(load_more_button).to_be_attached(timeout=15000)
-
-        if self._is_info_label_in_scroll_viewport(load_more_button):
-            return load_more_button
-
-        scroll_before = self._read_general_tab_scroll_metrics(load_more_button)
-        print(
-            "Contacts tab scroll before: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
-        )
-
-        for _ in range(60):
-            if self._is_info_label_in_scroll_viewport(load_more_button):
-                            break
-
-            scrolled = self._scroll_info_label_toward_viewport(load_more_button)
-            if not scrolled:
-                self._wheel_scroll_contacts_tab_down(sidebar)
-            self.page.wait_for_timeout(200)
-
-        self.page.wait_for_timeout(3000)
-        load_more_button.scroll_into_view_if_needed(timeout=5000)
-        expect(load_more_button).to_be_visible(timeout=15000)
-        assert self._is_info_label_in_scroll_viewport(load_more_button), (
-            f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button is not visible "
-            "in the Contacts tab viewport after scrolling."
-        )
-
-        scroll_after = self._read_general_tab_scroll_metrics(load_more_button)
-        print(
-            "Contacts tab scroll after: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
-        )
-        return load_more_button
-
-    def _load_more_contacts(self, sidebar: Locator) -> None:
-        contact_items = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        load_more_button = self._load_more_contacts_button(sidebar)
-        expect(load_more_button).to_be_visible(timeout=10000)
-
-        count_before = contact_items.count()
+    def _load_more_contacts(self) -> None:
+        count_before = self._query_count(self.CONTACT_ITEM_SELECTOR)
         assert count_before >= 1, (
             f"Expected contacts before {self.LOAD_MORE_CONTACTS_BUTTON_TEXT}."
         )
-        print(
-            f"Contact count before {self.LOAD_MORE_CONTACTS_BUTTON_TEXT}: "
-            f"{count_before}",
-            flush=True,
-        )
-
-        def api_matches(response) -> bool:
-            return (
-                Config.DAKOTA_SEARCH_API_URL in response.url
-                and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-            )
-
-        with self.page.expect_response(api_matches, timeout=30000) as response_info:
-            load_more_button.click()
-
-        response = response_info.value
-        print(
-            f"Load more contacts API responded with {response.status}: "
-            f"{response.url}",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if contact_items.count() > count_before:
-                break
-            time.sleep(0.5)
-
-        count_after = contact_items.count()
-        print(
-            f"Contact count after {self.LOAD_MORE_CONTACTS_BUTTON_TEXT}: "
-            f"{count_after}",
-            flush=True,
-        )
-        assert count_after > count_before, (
-            f'Expected more contacts after clicking "{self.LOAD_MORE_CONTACTS_BUTTON_TEXT}", '
-            f"but count stayed at {count_after}."
-        )
-        expect(contact_items.nth(count_before)).to_be_visible(timeout=10000)
-
-    def _wheel_scroll_contacts_tab_down(self, sidebar: Locator) -> None:
-        for selector in self.CONTACTS_SCROLL_CONTAINER_SELECTORS:
-            scroll_container = sidebar.locator(selector).first
-            if scroll_container.count() == 0:
-                continue
-
-            metrics = self._read_scroll_container_metrics(scroll_container)
-            if metrics["scrollHeight"] <= metrics["clientHeight"] + 1:
-                continue
-
-            scroll_container.hover(force=True, timeout=3000)
-            self.page.mouse.wheel(0, 500)
-            return
-
-        sidebar.hover(force=True, timeout=3000)
-        self.page.mouse.wheel(0, 500)
-
-    def _open_investors_tab(self, sidebar: Locator) -> None:
-        investors_tab = sidebar.locator(self.INVESTORS_TAB_SELECTOR).filter(
-            has_text=re.compile(rf"^{re.escape(self.INVESTORS_TAB_NAME)}$")
-        ).first
-        expect(investors_tab).to_be_visible(timeout=10000)
-        investors_tab.click()
-        self.page.wait_for_timeout(3000)
-        print(f"Navigated to {self.INVESTORS_TAB_NAME} tab.", flush=True)
-
-    def _verify_investors_tab_content_displayed(self, sidebar: Locator) -> None:
-        no_results = sidebar.locator(".dakota-no-results p").filter(
-            has_text=re.compile(re.escape(self.INVESTORS_NO_RESULTS_TEXT), re.I)
-        )
-        investor_items = sidebar.locator(self.INVESTOR_ITEM_SELECTOR)
-
-        expect(no_results.or_(investor_items.first)).to_be_visible(timeout=15000)
-
-        if no_results.count() > 0 and no_results.first.is_visible():
-            print(
-                f"Investors tab displayed empty state: {self.INVESTORS_NO_RESULTS_TEXT}",
-                flush=True,
-            )
-        else:
-            expect(investor_items.first).to_be_visible(timeout=10000)
-            investor_count = investor_items.count()
-            print(
-                f"Investors tab displayed {investor_count} investor result(s).",
-                flush=True,
-            )
-
-        self.page.wait_for_timeout(3000)
-
-    def _verify_investors_metro_areas_displayed(self, sidebar: Locator) -> None:
-        investor_items = sidebar.locator(self.INVESTOR_ITEM_SELECTOR)
-        expect(investor_items.first).to_be_visible(timeout=15000)
-
-        investor_count = investor_items.count()
-        assert investor_count >= 1, (
-            "Expected at least one investor to verify state/city display."
-        )
-
-        for index in range(investor_count):
-            investor = investor_items.nth(index)
-            metro = investor.locator(self.INVESTOR_DETAILS_SELECTOR).locator(
-                self.INVESTOR_METRO_SELECTOR
-            ).first
-            expect(metro).to_be_visible(timeout=10000)
-            metro_text = metro.inner_text().strip()
-            assert metro_text, (
-                f"Investor {index + 1} of {investor_count} is missing a state/city."
-            )
-            print(
-                f"Investor {index + 1} state/city: {metro_text}",
-                flush=True,
-            )
-
-        print(
-            f"All {investor_count} investor(s) display a state/city.",
-            flush=True,
-        )
-
-    def _verify_investors_tab_count_displayed(self, sidebar: Locator) -> None:
-        investors_header = sidebar.locator(self.INVESTORS_HEADER_SELECTOR)
-        expect(investors_header.locator("h3")).to_have_text(
-            self.INVESTORS_TAB_NAME,
-            timeout=15000,
-        )
-
-        count_label = investors_header.locator("p").filter(
-            has_text=self.INVESTORS_COUNT_TEXT_PATTERN
-        )
-        expect(count_label).to_be_visible(timeout=15000)
-        count_text = count_label.inner_text().strip()
-        print(f"Investors tab count label: {count_text}", flush=True)
-
-        match = re.search(r"Showing (\d+)", count_text, re.I)
-        assert match, (
-            f"Could not parse investor count from Investors tab label '{count_text}'."
-        )
-        displayed_count = int(match.group(1))
-        investor_items = sidebar.locator(self.INVESTOR_ITEM_SELECTOR)
-        expect(investor_items.first).to_be_visible(timeout=10000)
-        assert investor_items.count() == displayed_count, (
-            "Investors tab count label does not match displayed investor results. "
-            f"Label: {displayed_count}, displayed: {investor_items.count()}"
-        )
-
-    def _load_more_investors_button(self, sidebar: Locator) -> Locator:
-        role_based = sidebar.get_by_role(
-            "button",
-            name=re.compile(re.escape(self.LOAD_MORE_INVESTORS_BUTTON_TEXT), re.I),
-        )
-        if role_based.count() > 0:
-            return role_based.first
-
-        return sidebar.locator("button.dakota-load-more-button").filter(
-            has_text=re.compile(re.escape(self.LOAD_MORE_INVESTORS_BUTTON_TEXT), re.I)
-        ).first
-
-    def _ensure_load_more_investors_button_visible(
-        self,
-        sidebar: Locator,
-    ) -> Locator:
-        load_more_button = self._load_more_investors_button(sidebar)
-        expect(load_more_button).to_be_attached(timeout=15000)
-
-        if self._is_info_label_in_scroll_viewport(load_more_button):
-            return load_more_button
-
-        scroll_before = self._read_general_tab_scroll_metrics(load_more_button)
-        print(
-            "Investors tab scroll before: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
-        )
-
-        for _ in range(60):
-            if self._is_info_label_in_scroll_viewport(load_more_button):
-                break
-
-            scrolled = self._scroll_info_label_toward_viewport(load_more_button)
-            if not scrolled:
-                self._wheel_scroll_investors_tab_down(sidebar)
-            self.page.wait_for_timeout(200)
-
-        self.page.wait_for_timeout(3000)
-        load_more_button.scroll_into_view_if_needed(timeout=5000)
-        expect(load_more_button).to_be_visible(timeout=15000)
-        assert self._is_info_label_in_scroll_viewport(load_more_button), (
-            f"{self.LOAD_MORE_INVESTORS_BUTTON_TEXT} button is not visible "
-            "in the Investors tab viewport after scrolling."
-        )
-
-        scroll_after = self._read_general_tab_scroll_metrics(load_more_button)
-        print(
-            "Investors tab scroll after: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
-        )
-        return load_more_button
-
-    def _load_more_investors(self, sidebar: Locator) -> None:
-        investor_items = sidebar.locator(self.INVESTOR_ITEM_SELECTOR)
-        load_more_button = self._load_more_investors_button(sidebar)
-        expect(load_more_button).to_be_visible(timeout=10000)
-
-        count_before = investor_items.count()
-        assert count_before >= 1, (
-            f"Expected investors before {self.LOAD_MORE_INVESTORS_BUTTON_TEXT}."
-        )
-        print(
-            f"Investor count before {self.LOAD_MORE_INVESTORS_BUTTON_TEXT}: "
-            f"{count_before}",
-            flush=True,
-        )
-
-        def api_matches(response) -> bool:
-            return (
-                Config.DAKOTA_SEARCH_API_URL in response.url
-                and response.status == Config.DAKOTA_SEARCH_EXPECTED_API_STATUS
-            )
-
-        with self.page.expect_response(api_matches, timeout=30000) as response_info:
-            load_more_button.click()
-
-        response = response_info.value
-        print(
-            f"Load more investors API responded with {response.status}: "
-            f"{response.url}",
-            flush=True,
-        )
-        self.page.wait_for_timeout(3000)
-
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            if investor_items.count() > count_before:
-                break
-            time.sleep(0.5)
-
-        count_after = investor_items.count()
-        print(
-            f"Investor count after {self.LOAD_MORE_INVESTORS_BUTTON_TEXT}: "
-            f"{count_after}",
-            flush=True,
-        )
-        assert count_after > count_before, (
-            f'Expected more investors after clicking "{self.LOAD_MORE_INVESTORS_BUTTON_TEXT}", '
-            f"but count stayed at {count_after}."
-        )
-        expect(investor_items.nth(count_before)).to_be_visible(timeout=10000)
-
-    def scroll_investors_tab_to_end(self, sidebar: Locator) -> None:
-        investor_items = sidebar.locator(self.INVESTOR_ITEM_SELECTOR)
-        expect(investor_items.first).to_be_visible(timeout=15000)
-
-        investor_count = investor_items.count()
-        assert investor_count >= 1, (
-            "Expected investors before scrolling to the end of the Investors tab."
-        )
-
-        scroll_before = self._read_investors_scroll_metrics(sidebar)
-        print(
-            "Investors tab scroll metrics before end scroll: "
-            f"top={scroll_before['scrollTop']}, "
-            f"height={scroll_before['scrollHeight']}, "
-            f"viewport={scroll_before['clientHeight']}",
-            flush=True,
-        )
-
-        if investor_count > 1:
-            investor_items.last.scroll_into_view_if_needed(timeout=15000)
-
-        self._scroll_investors_container_to_end(sidebar)
-        self.page.wait_for_timeout(1000)
-
-        scroll_after = self._read_investors_scroll_metrics(sidebar)
-        print(
-            "Investors tab scroll metrics after end scroll: "
-            f"top={scroll_after['scrollTop']}, "
-            f"height={scroll_after['scrollHeight']}, "
-            f"viewport={scroll_after['clientHeight']}",
-            flush=True,
-        )
-
-        self._verify_investors_scrolled_to_end(scroll_before, scroll_after)
-        if investor_count > 1:
-            expect(investor_items.last).to_be_in_viewport(timeout=5000)
-
-    def _read_investors_scroll_metrics(self, sidebar: Locator) -> dict[str, int]:
-        investors_page = sidebar.locator(self.INVESTORS_PAGE_SELECTOR).first
-        if investors_page.count() > 0:
-            return self._read_scroll_container_metrics(investors_page)
-
-        return sidebar.locator(self.INVESTOR_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
-                while (node) {
-                    if (node.scrollHeight > node.clientHeight + 1) {
-                        return {
-                            scrollTop: node.scrollTop,
-                            scrollHeight: node.scrollHeight,
-                            clientHeight: node.clientHeight,
-                        };
-                    }
-                    node = node.parentElement;
+        clicked = self._js(
+            """
+            const root = document.getElementById('crxjs-app')?.shadowRoot;
+            const btn = root?.querySelector('button.contacts-dakota-load-more-button');
+            if (btn) { btn.click(); return true; }
+            const buttons = root?.querySelectorAll('button') || [];
+            for (const b of buttons) {
+                if (/load more/i.test((b.textContent || '').trim())) {
+                    b.click();
+                    return true;
                 }
-                return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
-            }"""
+            }
+            return false;
+            """
+        )
+        if not clicked:
+            pytest.fail(f"{self.LOAD_MORE_CONTACTS_BUTTON_TEXT} button not found.")
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) > count_before
         )
 
-    def _scroll_investors_container_to_end(self, sidebar: Locator) -> None:
-        investors_page = sidebar.locator(self.INVESTORS_PAGE_SELECTOR).first
-        if investors_page.count() > 0:
-            investors_page.evaluate("node => { node.scrollTop = node.scrollHeight; }")
-            return
+    def verify_contacts_tab_load_more_button(self) -> None:
+        with allure_step(self.driver, "Read Contacts count on General tab"):
+            general_value = self._get_general_tab_stat_value(self.CONTACTS_TAB_NAME)
+            general_count = self._parse_contacts_stat_count(general_value)
+            print(f"General tab Contacts count: {general_value} ({general_count})", flush=True)
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Scroll Contacts tab to the end of the list"):
+            self.scroll_contacts_tab_to_end()
+        with allure_step(
+            self.driver,
+            "Verify Load more button visibility matches General tab contact count",
+        ):
+            self._verify_contacts_tab_load_more_visibility(general_count)
 
-        sidebar.locator(self.INVESTOR_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
-                while (node) {
-                    if (node.scrollHeight > node.clientHeight + 1) {
-                        node.scrollTop = node.scrollHeight;
-                        return;
-                    }
-                    node = node.parentElement;
-                }
-            }"""
-        )
-
-    def _verify_investors_scrolled_to_end(
-        self,
-        scroll_before: dict[str, int],
-        scroll_after: dict[str, int],
-    ) -> None:
-        scroll_height = scroll_after["scrollHeight"]
-        client_height = scroll_after["clientHeight"]
-        scroll_top = scroll_after["scrollTop"]
-
-        if scroll_height <= client_height + 1:
-            print(
-                "Investors tab list is not scrollable; already fully visible.",
-                flush=True,
+    def verify_contacts_tab_load_more_displays_more(self) -> None:
+        with allure_step(self.driver, "Read Contacts count on General tab"):
+            general_value = self._get_general_tab_stat_value(self.CONTACTS_TAB_NAME)
+            general_count = self._parse_contacts_stat_count(general_value)
+            print(f"General tab Contacts count: {general_value} ({general_count})", flush=True)
+            assert general_count > self.CONTACTS_PAGE_SIZE, (
+                f"Expected more than {self.CONTACTS_PAGE_SIZE} contacts to verify "
+                f"Load more displays more, but General tab shows {general_count}."
             )
-            return
+        with allure_step(self.driver, "Verify Contacts tab is displayed"):
+            self._wait_visible(self.CONTACTS_TAB_SELECTOR)
+        with allure_step(self.driver, "Navigate to Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Scroll Contacts tab until Load more is visible"):
+            self.scroll_contacts_tab_to_end()
+            self._ensure_load_more_contacts_button_visible()
+        with allure_step(self.driver, 'Click "Load more" to fetch additional contacts'):
+            self._load_more_contacts()
+        with allure_step(self.driver, "Scroll Contacts tab to the end of the list"):
+            self.scroll_contacts_tab_to_end()
 
-        at_bottom = scroll_top + client_height >= scroll_height - 2
-        if not at_bottom:
-                    pytest.fail(
-                "Investors tab did not scroll to the end. "
-                f"scrollTop={scroll_top}, clientHeight={client_height}, "
-                f"scrollHeight={scroll_height}"
-            )
-
-        if scroll_top < scroll_before["scrollTop"]:
-            pytest.fail(
-                "Investors tab scroll position moved upward unexpectedly. "
-                f"before={scroll_before['scrollTop']}, after={scroll_top}"
-            )
-
-        print(
-            "Investors tab scrolled successfully to the end of the list.",
-            flush=True,
-        )
-
-    def _wheel_scroll_investors_tab_down(self, sidebar: Locator) -> None:
-        for selector in self.INVESTORS_SCROLL_CONTAINER_SELECTORS:
-            scroll_container = sidebar.locator(selector).first
-            if scroll_container.count() == 0:
-                continue
-
-            metrics = self._read_scroll_container_metrics(scroll_container)
-            if metrics["scrollHeight"] <= metrics["clientHeight"] + 1:
-                continue
-
-            scroll_container.hover(force=True, timeout=3000)
-            self.page.mouse.wheel(0, 500)
-            return
-
-        sidebar.hover(force=True, timeout=3000)
-        self.page.mouse.wheel(0, 500)
-
-    def _open_investment_details_tab(self, sidebar: Locator) -> None:
-        investment_details_tab = sidebar.locator(
-            self.INVESTMENT_DETAILS_TAB_SELECTOR
-        ).filter(
-            has_text=re.compile(r"^Investment\s+Details$", re.I)
-        ).first
-        expect(investment_details_tab).to_be_visible(timeout=10000)
-        investment_details_tab.click()
-        self.page.wait_for_timeout(3000)
-        print(
-            f"Navigated to {self.INVESTMENT_DETAILS_TAB_NAME} tab.",
-            flush=True,
-        )
-
-    def _verify_investment_details_tab_content_displayed(
-        self,
-        sidebar: Locator,
-    ) -> None:
-        no_content = sidebar.locator(".dakota-no-content p").filter(
-            has_text=re.compile(
-                rf"{re.escape(self.INVESTMENT_DETAILS_NO_CONTENT_TEXT)}\.?",
-                re.I,
-            )
-        )
-        detail_items = sidebar.locator(self.INVESTMENT_DETAILS_ITEM_SELECTOR)
-
-        expect(no_content.or_(detail_items.first)).to_be_visible(timeout=15000)
-
-        if no_content.count() > 0 and no_content.first.is_visible():
-            print(
-                "Investment Details tab displayed empty state: "
-                f"{self.INVESTMENT_DETAILS_NO_CONTENT_TEXT}",
-                flush=True,
-            )
-        else:
-            expect(detail_items.first).to_be_visible(timeout=10000)
-            detail_count = detail_items.count()
-            print(
-                f"Investment Details tab displayed {detail_count} detail item(s).",
-                flush=True,
+    def verify_contacts_count_matches_general_tab(self) -> None:
+        with allure_step(self.driver, "Read Contacts count on General tab"):
+            general_value = self._get_general_tab_stat_value(self.CONTACTS_TAB_NAME)
+            general_count = self._parse_contacts_stat_count(general_value)
+            print(f"General tab Contacts count: {general_value} ({general_count})", flush=True)
+        with allure_step(self.driver, "Open Contacts tab"):
+            self._open_contacts_tab()
+        with allure_step(self.driver, "Verify Contacts tab count matches General tab"):
+            contacts_count = self._count_contacts_on_contacts_tab()
+            print(f"Contacts tab displayed count: {contacts_count}", flush=True)
+            assert contacts_count == general_count, (
+                "Contacts tab count does not match General tab Contacts stat. "
+                f"General tab: {general_count}, Contacts tab: {contacts_count}"
             )
 
-        self.page.wait_for_timeout(3000)
-
-    def _verify_investment_details_geography_displayed(
-        self,
-        sidebar: Locator,
-    ) -> None:
-        geography_item = sidebar.locator(
-            f"{self.INVESTMENT_DETAILS_ITEM_SELECTOR}:has("
-            f"h3:text-is('{self.INVESTMENT_DETAILS_GEOGRAPHY_LABEL}'))"
-        ).first
-        expect(geography_item).to_be_visible(timeout=15000)
-        expect(geography_item.locator("h3")).to_have_text(
-            self.INVESTMENT_DETAILS_GEOGRAPHY_LABEL,
-            timeout=10000,
-        )
-
-        geography_value = geography_item.locator(
-            self.INVESTMENT_DETAILS_DESCRIPTION_SELECTOR
-        ).first
-        expect(geography_value).to_be_visible(timeout=10000)
-        geography_text = geography_value.inner_text().strip()
-        assert geography_text, (
-            f"Expected a displayed {self.INVESTMENT_DETAILS_GEOGRAPHY_LABEL} value "
-            "on the Investment Details tab."
-        )
-        print(
-            f"Investment Details {self.INVESTMENT_DETAILS_GEOGRAPHY_LABEL}: "
-            f"{geography_text}",
-            flush=True,
-        )
-
-        self.page.wait_for_timeout(3000)
-
-    def _verify_investment_details_industry_displayed(
-        self,
-        sidebar: Locator,
-    ) -> None:
-        industry_item = sidebar.locator(
-            f"{self.INVESTMENT_DETAILS_ITEM_SELECTOR}:has("
-            f"h3:text-is('{self.INVESTMENT_DETAILS_INDUSTRY_LABEL}'))"
-        ).first
-        expect(industry_item).to_be_visible(timeout=15000)
-        expect(industry_item.locator("h3")).to_have_text(
-            self.INVESTMENT_DETAILS_INDUSTRY_LABEL,
-            timeout=10000,
-        )
-
-        industry_value = industry_item.locator(
-            self.INVESTMENT_DETAILS_DESCRIPTION_SELECTOR
-        ).first
-        expect(industry_value).to_be_visible(timeout=10000)
-        industry_text = industry_value.inner_text().strip()
-        assert industry_text, (
-            f"Expected a displayed {self.INVESTMENT_DETAILS_INDUSTRY_LABEL} value "
-            "on the Investment Details tab."
-        )
-        print(
-            f"Investment Details {self.INVESTMENT_DETAILS_INDUSTRY_LABEL}: "
-            f"{industry_text}",
-            flush=True,
-        )
-
-        self.page.wait_for_timeout(3000)
-
-    def _verify_investment_details_check_size_displayed(
-        self,
-        sidebar: Locator,
-    ) -> None:
-        check_size_item = sidebar.locator(
-            f"{self.INVESTMENT_DETAILS_ITEM_SELECTOR}:has("
-            f"h3:text-is('{self.INVESTMENT_DETAILS_CHECK_SIZE_LABEL}'))"
-        ).first
-        expect(check_size_item).to_be_visible(timeout=15000)
-        expect(check_size_item.locator("h3")).to_have_text(
-            self.INVESTMENT_DETAILS_CHECK_SIZE_LABEL,
-            timeout=10000,
-        )
-
-        check_size_value = check_size_item.locator(
-            self.INVESTMENT_DETAILS_DESCRIPTION_SELECTOR
-        ).first
-        expect(check_size_value).to_be_visible(timeout=10000)
-        check_size_text = check_size_value.inner_text().strip()
-        assert check_size_text, (
-            f"Expected a displayed {self.INVESTMENT_DETAILS_CHECK_SIZE_LABEL} value "
-            "on the Investment Details tab."
-        )
-        print(
-            f"Investment Details {self.INVESTMENT_DETAILS_CHECK_SIZE_LABEL}: "
-            f"{check_size_text}",
-            flush=True,
-        )
-
-        self.page.wait_for_timeout(3000)
-
-    def _open_platform_details_tab(self, sidebar: Locator) -> None:
-        platform_details_tab = sidebar.locator(
-            self.PLATFORM_DETAILS_TAB_SELECTOR
-        ).filter(
-            has_text=re.compile(r"^Platform\s+Details$", re.I)
-        ).first
-        expect(platform_details_tab).to_be_visible(timeout=10000)
-        platform_details_tab.click()
-        self.page.wait_for_timeout(3000)
-        print(
-            f"Navigated to {self.PLATFORM_DETAILS_TAB_NAME} tab.",
-            flush=True,
-        )
-
-    def _verify_platform_details_platform_description_displayed(
-        self,
-        sidebar: Locator,
-    ) -> None:
-        platform_description_item = sidebar.locator(
-            f"{self.PLATFORM_DETAILS_ITEM_SELECTOR}:has("
-            f"h3:text-is('{self.PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL}'))"
-        ).first
-        expect(platform_description_item).to_be_visible(timeout=15000)
-        expect(platform_description_item.locator("h3")).to_have_text(
-            self.PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL,
-            timeout=10000,
-        )
-
-        description_value = platform_description_item.locator(
-            self.PLATFORM_DETAILS_DESCRIPTION_SELECTOR
-        ).first
-        expect(description_value).to_be_visible(timeout=10000)
-        description_text = description_value.inner_text().strip()
-        assert description_text, (
-            "Expected a displayed Platform Description value "
-            "on the Platform Details tab."
-        )
-        print(
-            f"Platform Details {self.PLATFORM_DETAILS_PLATFORM_DESCRIPTION_LABEL}: "
-            f"{description_text}",
-            flush=True,
-        )
-
-        self.page.wait_for_timeout(3000)
-
-    def _count_contacts_on_contacts_tab(self, sidebar: Locator) -> int:
-        contacts = sidebar.locator(self.CONTACT_ITEM_SELECTOR)
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            count = contacts.count()
-            if count > 0:
-                expect(contacts.first).to_be_visible(timeout=5000)
-                return count
-            time.sleep(0.5)
-
-        return 0
-
-    def _verify_company_details_content_displayed(
-        self,
-        sidebar: Locator,
-        search_term: str,
-    ) -> None:
-        expect(sidebar).to_be_visible(timeout=5000)
-
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            visible_text = sidebar.inner_text().strip()
-            if len(visible_text) >= 30:
-                print(
-                    f"Company details content displayed after searching "
-                    f"'{search_term}' ({len(visible_text)} characters)",
-                    flush=True,
-                )
-                return
-            time.sleep(0.5)
-
-        pytest.fail(
-            "No company details content was displayed in the sidebar after "
-            f"opening a search result for '{search_term}'."
-        )
-
-    def _read_results_scroll_metrics(self, sidebar: Locator) -> dict[str, int]:
-        return sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
-                while (node) {
-                    if (node.scrollHeight > node.clientHeight + 1) {
-                        return {
-                            scrollTop: node.scrollTop,
-                            scrollHeight: node.scrollHeight,
-                            clientHeight: node.clientHeight,
-                        };
-                    }
-                    node = node.parentElement;
-                }
-                return { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
-            }"""
-        )
-
-    def _scroll_results_container_to_end(self, sidebar: Locator) -> None:
-        sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR).first.evaluate(
-            """el => {
-                let node = el.parentElement;
-                while (node) {
-                    if (node.scrollHeight > node.clientHeight + 1) {
-                        node.scrollTop = node.scrollHeight;
-                        return;
-                    }
-                    node = node.parentElement;
-                }
-            }"""
-        )
-
-    def _verify_results_scrolled_to_end(
-        self,
-        scroll_before: dict[str, int],
-        scroll_after: dict[str, int],
-    ) -> None:
-        scroll_height = scroll_after["scrollHeight"]
-        client_height = scroll_after["clientHeight"]
-        scroll_top = scroll_after["scrollTop"]
-
-        if scroll_height <= client_height + 1:
-            print("Results list is not scrollable; already fully visible.")
-            return
-
-        at_bottom = scroll_top + client_height >= scroll_height - 2
-        if not at_bottom:
-            pytest.fail(
-                "Search results did not scroll to the end. "
-                f"scrollTop={scroll_top}, clientHeight={client_height}, "
-                f"scrollHeight={scroll_height}"
-            )
-
-        if scroll_top < scroll_before["scrollTop"]:
-            pytest.fail(
-                "Search results scroll position moved upward unexpectedly. "
-                f"before={scroll_before['scrollTop']}, after={scroll_top}"
-            )
-
-        print("Search results scrolled successfully to the end of the list.")
-
-    def _ensure_browser_window_focused(self) -> None:
-        self.page.bring_to_front()
-        dismiss_marketplace_obstructions(self.page)
-        self.page.mouse.click(120, 120)
-        time.sleep(0.5)
-
-    def open_from_extension_toolbar(self) -> None:
-        """Click the pinned Dakota icon and require the sidebar panel to open."""
-        self._ensure_browser_window_focused()
-
-        if not self.is_sidebar_open():
-            icon_position = Config.CHROME_DAKOTA_EXTENSION_ICON_POSITION
-            print(f"Clicking Dakota extension icon at {icon_position}")
-            native_left_click(icon_position)
-        time.sleep(1)
-
-        if not self.is_sidebar_open():
-            print("Toolbar click did not open sidebar; trying in-page floating button.")
-            self.open_sidebar_if_closed()
-
+    def _count_contacts_on_contacts_tab(self) -> int:
         try:
-            expect(self._sidebar()).to_be_visible(timeout=15000)
-        except (AssertionError, PlaywrightTimeoutError):
-            screen_width, screen_height = pyautogui.size()
-            icon_position = Config.CHROME_DAKOTA_EXTENSION_ICON_POSITION
-            pytest.fail(
-                "Dakota sidebar did not open after clicking the extension toolbar icon. "
-                f"Clicked at {icon_position} on a {screen_width}x{screen_height} display. "
-                "Update CHROME_DAKOTA_EXTENSION_ICON_X/Y in config or env vars."
+            WebDriverWait(self.driver, self.timeout).until(
+                lambda d: self._query_count(self.CONTACT_ITEM_SELECTOR) >= 1
             )
+        except TimeoutException:
+            return 0
+        return self._query_count(self.CONTACT_ITEM_SELECTOR)
 
-        self.page.wait_for_timeout(1000)
+    # ------------------------------------------------------------------
+    # Public verify_dakota_* entry points (login handled by conftest)
+    # ------------------------------------------------------------------
 
-    def _sidebar(self) -> Locator:
-        return self.page.locator(self.SIDEBAR_OPEN_SELECTOR).first
+    def verify_dakota_search_results(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
 
-    def _snapshot_open_pages(self) -> set[Page]:
-        return set(self.page.context.pages)
-
-    def _is_salesforce_login_page(self, candidate: Page) -> bool:
-        try:
-            url = candidate.url.lower()
-            title = candidate.title().lower()
-        except Exception:
-            return False
-        return (
-            "salesforce.com" in url
-            or "login" in title
-            or "salesforce" in title
-        )
-
-    def _dismiss_premature_salesforce_tabs(self, pages_before_navigation: set[Page]) -> None:
-        """Close auth tabs that open on page load before the sidebar flow runs."""
-        for candidate in list(self.page.context.pages):
-            if candidate in pages_before_navigation or candidate == self.page:
-                continue
-            if self._is_salesforce_login_page(candidate):
-                print(
-                    "Closing premature Salesforce tab opened before sidebar flow: "
-                    f"{candidate.url}"
-                )
-                candidate.close()
-
-    def _wait_for_sidebar_auth_state(self, timeout_s: float = 30) -> bool:
-        """Return True when logged in (search visible), False when login is required."""
-        sidebar = self._sidebar()
-        expect(sidebar).to_be_visible(timeout=5000)
-
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            if sidebar.locator(self.SEARCH_BAR_SELECTOR).first.is_visible(timeout=200):
-                print("Session detected: search bar visible in open sidebar.")
-                return True
-            if sidebar.locator(self.LOGIN_BUTTON_SELECTOR).first.is_visible(timeout=200):
-                print("No session detected: Login to Dakota button visible in open sidebar.")
-                return False
-            time.sleep(0.5)
-
-        pytest.fail(
-            "Open sidebar did not show either the search bar (logged in) or "
-            "the Login to Dakota button within 30s."
-        )
-
-    def _wait_for_salesforce_login_page(self, timeout_s: float = 30) -> Page:
-        login_page = None
-        for attempt in range(int(timeout_s * 2)):
-            for candidate in self.page.context.pages:
-                if candidate == self.page:
-                    continue
-                if self._is_salesforce_login_page(candidate):
-                    login_page = candidate
-                    print(f"Found Salesforce login page: {candidate.url}")
-                    break
-            if login_page:
-                break
-            if attempt % 10 == 0:
-                print("Waiting for Salesforce login tab after sidebar login click...")
-            time.sleep(0.5)
-
-        if not login_page:
-            pytest.fail(
-                "Salesforce login page not found after clicking Login to Dakota in the sidebar."
-            )
-        return login_page
-
-    def is_sidebar_open(self) -> bool:
-        return self._sidebar().is_visible(timeout=200)
-
-    def _verify_search_results_visible(self, search_term: str) -> None:
-        sidebar = self._sidebar()
-        expect(sidebar).to_be_visible(timeout=5000)
-
-        results = sidebar.locator(self.SEARCH_RESULT_ITEM_SELECTOR)
-        expect(results.first).to_be_visible(timeout=15000)
-        assert results.count() >= 1, (
-            f"Expected at least one search result for '{search_term}', got 0."
-        )
-        expect(results.first.locator(self.SEARCH_RESULT_NAME_SELECTOR)).to_be_visible()
-        self.page.wait_for_timeout(3000)
-
-    @staticmethod
-    def _normalize_url_for_search_prefill(url: str) -> str:
-        """Match extension prefill: drop scheme, www., and trailing slash."""
-        normalized = url.strip()
-        normalized = re.sub(r"^https?://", "", normalized, flags=re.I)
-        normalized = re.sub(r"^www\.", "", normalized, flags=re.I)
-        return normalized.rstrip("/")
-
-    @classmethod
-    def _search_bar_value_matches_url(cls, actual: str, page_url: str) -> bool:
-        return cls._normalize_url_for_search_prefill(actual) == cls._normalize_url_for_search_prefill(
-            page_url
-        )
-
-    def _wait_for_search_bar_url(
-        self,
-        search_bar: Locator,
-        page_url: str,
-        timeout_s: float = 30,
-    ) -> None:
-        expected_prefill = self._normalize_url_for_search_prefill(page_url)
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            actual_value = search_bar.input_value().strip()
-            if self._search_bar_value_matches_url(actual_value, page_url):
-                return
-            time.sleep(0.5)
-
-        actual_value = search_bar.input_value().strip()
-        pytest.fail(
-            "Sidebar search bar was not prefilled with the expected page URL. "
-            f"Expected '{expected_prefill}', got '{actual_value}'."
-        )
-
-    def find_search_bar(self) -> Locator | None:
-        if not self.is_sidebar_open():
-            return None
-
-        sidebar = self._sidebar()
-        for selector in self.SEARCH_BAR_SELECTORS:
+    def verify_external_page_auto_search_results(self, page_url: str) -> None:
+        attempts = 3 if self._is_linkedin_url(page_url) else 1
+        last_error = None
+        for attempt in range(1, attempts + 1):
             try:
-                locator = sidebar.locator(selector).first
-                if locator.is_visible(timeout=200):
-                    return locator
-            except Exception:
-                continue
-        return None
-
-    def open_sidebar_if_closed(self) -> None:
-        if self.is_sidebar_open():
-            return
-
-        toggle = self.page.locator(self.SIDEBAR_TOGGLE_SELECTOR).first
-        if toggle.is_visible(timeout=2000):
-            toggle.evaluate("el => el.click()")
-            self.page.wait_for_timeout(500)
-
-        deadline = time.time() + 10
-        while time.time() < deadline:
-            if self.is_sidebar_open():
+                self.open_external_page_and_sidebar(page_url)
+                self.ensure_sidebar_ready()
+                self.verify_sidebar_prefilled_search_and_results(page_url)
                 return
-            time.sleep(0.25)
+            except Exception as exc:  # pragma: no cover - defensive retry path
+                last_error = exc
+                if attempt == attempts:
+                    raise
+                # LinkedIn can intermittently redirect to authwall; recover and retry.
+                self._clear_linkedin_cookies()
+                self.driver.get("https://www.linkedin.com")
+                time.sleep(1)
+        if last_error is not None:
+            raise last_error
 
-    def ensure_sidebar_ready(self, timeout_s: float = 30) -> Locator:
-        deadline = time.time() + timeout_s
-        while time.time() < deadline:
-            search_bar = self.find_search_bar()
-            if search_bar:
-                return search_bar
+    def verify_dakota_search_results_scroll(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.scroll_search_results_to_end(search_term)
 
-            self.open_sidebar_if_closed()
-            time.sleep(0.5)
+    def verify_dakota_search_results_load_more(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.scroll_search_results_to_end(search_term)
+        self.load_more_search_results(search_term)
 
-        print("DEBUG: Search bar not found. Listing all available inputs:")
-        try:
-            for index, input_field in enumerate(self.page.locator("input").all()):
-                print(
-                    f"  Input {index}: id='{input_field.get_attribute('id')}', "
-                    f"name='{input_field.get_attribute('name')}', "
-                    f"visible={input_field.is_visible()}"
-                )
-        except Exception:
-            pass
+    def verify_dakota_company_details(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_and_verify_company_details(search_term)
 
-        pytest.fail("Could not find the search bar in the Dakota sidebar.")
+    def verify_dakota_company_general_tab(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_stat_cards()
 
-    def wait_for_salesforce_auth(self, login_page: Page, timeout_ms: int = 60000) -> None:
-        try:
-            login_page.wait_for_event("close", timeout=timeout_ms)
-        except Exception:
-            login_page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    def verify_dakota_contacts_count_matches_general_tab(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_count_matches_general_tab()
 
-        self.page.bring_to_front()
-        self.page.wait_for_timeout(1500)
+    def verify_dakota_company_account_overview(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_account_overview()
 
-    def _replace_input_value(self, field: Locator, value: str) -> None:
-        field.click()
-        field.press("Control+A")
-        field.press("Backspace")
-        field.fill(value)
+    def verify_dakota_company_general_tab_type(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_type()
 
-    def submit_salesforce_login(
+    def verify_dakota_company_general_tab_metro_area(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_metro_area()
+
+    def verify_dakota_company_general_tab_website(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_website()
+
+    def verify_dakota_company_general_tab_linkedin_url(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_linkedin_url()
+
+    def verify_dakota_company_general_tab_billing_address(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_general_tab_billing_address()
+
+    def verify_dakota_company_investors_tab(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_company_investors_tab()
+
+    def verify_dakota_company_investment_details_tab(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_for_tab(self.INVESTMENT_DETAILS_TAB_NAME)
+        self.verify_company_investment_details_tab()
+
+    def verify_dakota_company_platform_details_tab(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_allocator_search_result()
+        self.verify_company_platform_details_tab()
+
+    def verify_dakota_platform_details_tab_platform_description(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_allocator_search_result()
+        self.verify_platform_details_tab_platform_description()
+
+    def verify_dakota_contacts_tab_results(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_results()
+
+    def verify_dakota_contacts_tab_contact_count(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_count()
+
+    def verify_dakota_contacts_tab_load_more_button(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_load_more_button()
+
+    def verify_dakota_contacts_tab_load_more_displays_more(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_load_more_displays_more()
+
+    def verify_dakota_contacts_tab_contact_roles(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_roles()
+
+    def verify_dakota_contacts_tab_contact_urls(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_urls()
+
+    def verify_dakota_contacts_tab_contact_emails(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_emails()
+
+    def verify_dakota_contacts_tab_search_results(
         self,
-        login_page: Page,
-        username: str,
-        password: str,
+        company_search_term: str,
+        contact_search_term: str,
     ) -> None:
-        login_page.bring_to_front()
-        login_page.wait_for_load_state("load", timeout=30000)
+        self.search_and_verify_results(company_search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_search_results(contact_search_term)
 
-        username_selectors = (
-            "#username",
-            "input[name='username']",
-            "input[type='email']",
-            "input[placeholder*='Username']",
-        )
+    def verify_dakota_contacts_tab_contact_details(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_details()
 
-        username_field = None
-        for selector in username_selectors:
-            try:
-                locator = login_page.locator(selector).first
-                if locator.is_visible(timeout=2000):
-                    username_field = locator
-                    break
-            except Exception:
-                continue
+    def verify_dakota_contacts_tab_contact_type(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_type()
 
-        if not username_field:
-            username_field = login_page.locator("#username").first
-            username_field.wait_for(state="visible", timeout=30000)
+    def verify_dakota_contacts_tab_contact_metro_area(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_metro_area()
 
-        self._replace_input_value(username_field, username)
+    def verify_dakota_contacts_tab_contact_phone(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_phone()
 
-        password_field = login_page.locator(
-            "input[type='password'], #password"
-        ).filter(visible=True).first
-        self._replace_input_value(password_field, password)
+    def verify_dakota_contacts_tab_contact_detail_email(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_detail_email()
 
-        login_btn = login_page.locator(
-            "#Login, #login_button, input[type='submit']"
-        ).filter(visible=True).first
-        login_btn.click()
+    def verify_dakota_contacts_tab_contact_detail_linkedin_url(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_contact_detail_linkedin_url()
+
+    def verify_dakota_contacts_tab_go_back_to_contact_list(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_contacts_tab_go_back_to_contact_list()
+
+    def verify_dakota_investors_tab_results(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_investors_tab_results()
+
+    def verify_dakota_investment_details_tab_details(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_for_tab(self.INVESTMENT_DETAILS_TAB_NAME)
+        self.verify_investment_details_tab_details()
+
+    def verify_dakota_investment_details_tab_geography(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_for_tab(self.INVESTMENT_DETAILS_TAB_NAME)
+        self.verify_investment_details_tab_geography()
+
+    def verify_dakota_investment_details_tab_industry(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_for_tab(self.INVESTMENT_DETAILS_TAB_NAME)
+        self.verify_investment_details_tab_industry()
+
+    def verify_dakota_investment_details_tab_check_size(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_search_result_for_tab(self.INVESTMENT_DETAILS_TAB_NAME)
+        self.verify_investment_details_tab_check_size()
+
+    def verify_dakota_investors_tab_investor_count(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_investors_tab_investor_count()
+
+    def verify_dakota_investors_tab_load_more_button(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_investors_tab_load_more_button()
+
+    def verify_dakota_investors_tab_load_more_displays_more(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_investors_tab_load_more_displays_more()
+
+    def verify_dakota_investors_tab_investor_metro_areas(self, search_term: str) -> None:
+        self.search_and_verify_results(search_term)
+        self.open_first_search_result()
+        self.verify_investors_tab_investor_metro_areas()

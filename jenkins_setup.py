@@ -1,0 +1,257 @@
+"""
+Configure Jenkins for Dakota Chrome Extension UI (SCM pipeline).
+
+Creates/updates:
+  - Credential dakota-portal-creds
+  - Pipeline job Dakota-Chrome-Extension-UI from GitHub SCM
+
+# The weekly schedule can be enabled in Jenkinsfile via triggers { cron(...) }.
+
+Usage:
+  py -3 jenkins_setup.py
+  py -3 jenkins_setup.py --trigger-build
+
+Optional environment overrides:
+  JENKINS_URL, JENKINS_USER, JENKINS_PASSWORD
+  DAKOTA_USERNAME, DAKOTA_PASSWORD (portal credential payload)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import xml.sax.saxutils as xmlutils
+from pathlib import Path
+
+import requests
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+JENKINS_URL = os.getenv("JENKINS_URL", "http://110.93.205.18:8080")
+JENKINS_USER = os.getenv("JENKINS_USER", "Muhammad_Usman_Arshad")
+JENKINS_PASSWORD = os.getenv("JENKINS_PASSWORD", "").strip()
+
+GITHUB_REPO = os.getenv(
+    "GITHUB_REPO",
+    "https://github.com/TestWithMani/dakota_chrome_ext_ui.git",
+)
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
+
+JOB_NAME = "Dakota-Chrome-Extension-UI"
+CREDENTIAL_ID = "dakota-portal-creds"
+
+
+def load_portal_credentials() -> tuple[str, str]:
+    username = os.getenv("DAKOTA_USERNAME", "").strip()
+    password = os.getenv("DAKOTA_PASSWORD", "").strip()
+
+    creds_file = PROJECT_ROOT / "credentials.env"
+    if creds_file.exists():
+        for line in creds_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key == "DAKOTA_USERNAME" and not username:
+                username = value
+            elif key == "DAKOTA_PASSWORD" and not password:
+                password = value
+
+    if not username or not password:
+        raise RuntimeError(
+            "Portal credentials missing. Set DAKOTA_USERNAME/DAKOTA_PASSWORD "
+            "or create credentials.env before running jenkins_setup.py."
+        )
+    return username, password
+
+
+def session() -> requests.Session:
+    s = requests.Session()
+    s.auth = (JENKINS_USER, JENKINS_PASSWORD)
+    s.headers.update({"User-Agent": "dakota-chrome-ext-ui-setup/1.0"})
+    return s
+
+
+def crumb_headers(s: requests.Session) -> dict[str, str]:
+    resp = s.get(f"{JENKINS_URL}/crumbIssuer/api/json", timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return {data["crumbRequestField"]: data["crumb"]}
+
+
+def credential_exists(s: requests.Session, cred_id: str) -> bool:
+    resp = s.get(
+        f"{JENKINS_URL}/credentials/store/system/domain/_/api/json",
+        params={"depth": 1},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return any(c.get("id") == cred_id for c in resp.json().get("credentials", []))
+
+
+def build_portal_credential_config_xml(username: str, password: str) -> str:
+    return f"""<?xml version='1.1' encoding='UTF-8'?>
+<com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>
+  <scope>GLOBAL</scope>
+  <id>{CREDENTIAL_ID}</id>
+  <description>Dakota Marketplace portal login for Chrome extension UI tests</description>
+  <username>{xmlutils.escape(username)}</username>
+  <password>{xmlutils.escape(password)}</password>
+</com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl>
+"""
+
+
+def create_or_update_portal_credential(
+    s: requests.Session, username: str, password: str
+) -> None:
+    headers = crumb_headers(s)
+    if credential_exists(s, CREDENTIAL_ID):
+        headers["Content-Type"] = "application/xml; charset=UTF-8"
+        resp = s.post(
+            f"{JENKINS_URL}/credentials/store/system/domain/_/credential/{CREDENTIAL_ID}/config.xml",
+            headers=headers,
+            data=build_portal_credential_config_xml(username, password).encode("utf-8"),
+            timeout=60,
+        )
+        if resp.status_code not in (200, 201, 302):
+            raise RuntimeError(
+                f"Update credential failed HTTP {resp.status_code}: {resp.text[:1000]}"
+            )
+        print(f"[OK] Updated credential: {CREDENTIAL_ID} ({username})")
+        return
+
+    cred_json = {
+        "": "0",
+        "credentials": {
+            "scope": "GLOBAL",
+            "id": CREDENTIAL_ID,
+            "username": username,
+            "password": password,
+            "description": "Dakota Marketplace portal login for Chrome extension UI tests",
+            "$class": "com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl",
+        },
+    }
+    headers = crumb_headers(s)
+    resp = s.post(
+        f"{JENKINS_URL}/credentials/store/system/domain/_/createCredentials",
+        headers=headers,
+        data={"json": json.dumps(cred_json)},
+        timeout=60,
+    )
+    if resp.status_code not in (200, 201, 302):
+        raise RuntimeError(f"Create credential failed HTTP {resp.status_code}: {resp.text[:1000]}")
+    print(f"[OK] Created credential: {CREDENTIAL_ID}")
+
+
+def job_exists(s: requests.Session, name: str) -> bool:
+    return s.get(f"{JENKINS_URL}/job/{name}/api/json", timeout=30).status_code == 200
+
+
+def build_scm_job_config_xml() -> str:
+    return f"""<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <description>Dakota Chrome Extension UI — Selenium headless, Allure, HTML report, email</description>
+  <keepDependencies>false</keepDependencies>
+  <properties/>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>{GITHUB_REPO}</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/{GITHUB_BRANCH}</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+    </scm>
+    <scriptPath>Jenkinsfile</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>
+"""
+
+
+def create_or_update_job(s: requests.Session) -> None:
+    config_xml = build_scm_job_config_xml()
+    headers = crumb_headers(s)
+    headers["Content-Type"] = "application/xml; charset=UTF-8"
+
+    if job_exists(s, JOB_NAME):
+        resp = s.post(
+            f"{JENKINS_URL}/job/{JOB_NAME}/config.xml",
+            headers=headers,
+            data=config_xml.encode("utf-8"),
+            timeout=120,
+        )
+        action = "Updated"
+    else:
+        resp = s.post(
+            f"{JENKINS_URL}/createItem",
+            params={"name": JOB_NAME},
+            headers=headers,
+            data=config_xml.encode("utf-8"),
+            timeout=120,
+        )
+        action = "Created"
+
+    if resp.status_code not in (200, 201, 302):
+        raise RuntimeError(f"{action} job failed HTTP {resp.status_code}: {resp.text[:1500]}")
+    print(f"[OK] {action} SCM pipeline job: {JOB_NAME}")
+    print(f"     Repo: {GITHUB_REPO}")
+    print(f"     Branch: {GITHUB_BRANCH}")
+    # print("     Schedule: Jenkinsfile triggers { cron('0 14 * * 1') } (Monday 14:00)")
+
+
+def trigger_build(s: requests.Session) -> None:
+    headers = crumb_headers(s)
+    resp = s.post(f"{JENKINS_URL}/job/{JOB_NAME}/build", headers=headers, timeout=30)
+    if resp.status_code not in (200, 201, 302):
+        raise RuntimeError(f"Trigger build failed HTTP {resp.status_code}: {resp.text[:500]}")
+    print(f"[OK] Build triggered: {JENKINS_URL}/job/{JOB_NAME}/")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--trigger-build", action="store_true")
+    args = parser.parse_args()
+
+    portal_username, portal_password = load_portal_credentials()
+
+    if not JENKINS_PASSWORD:
+        raise RuntimeError(
+            "Jenkins API password missing. Set JENKINS_PASSWORD before running jenkins_setup.py."
+        )
+
+    s = session()
+    print(f"Jenkins: {JENKINS_URL}")
+    s.get(f"{JENKINS_URL}/api/json", timeout=30).raise_for_status()
+    print("[OK] Jenkins API login successful")
+
+    create_or_update_portal_credential(s, portal_username, portal_password)
+    create_or_update_job(s)
+
+    if args.trigger_build:
+        trigger_build(s)
+
+    print(f"\nJob URL: {JENKINS_URL}/job/{JOB_NAME}/")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        raise SystemExit(1)

@@ -1,21 +1,12 @@
 import allure
 
-from pages.dakota_sidebar_page import DakotaSidebarPage
-from utils.config import (
-    DAKOTA_MARKETPLACE_URL,
-    DAKOTA_PASSWORD,
-    DAKOTA_SIDEBAR_SEARCH_TERM,
-    DAKOTA_USERNAME,
-)
+from utils.config import Config
 
 
 @allure.title("Verify Dakota sidebar search results scroll to end")
 @allure.severity(allure.severity_level.NORMAL)
-def test_dakota_search_scroll(dakota_page):
+def test_dakota_search_scroll(dakota_sidebar):
     """Search in the Dakota sidebar and verify results can scroll to the end."""
-    DakotaSidebarPage(dakota_page).verify_dakota_search_results_scroll(
-        DAKOTA_MARKETPLACE_URL,
-        DAKOTA_USERNAME,
-        DAKOTA_PASSWORD,
-        DAKOTA_SIDEBAR_SEARCH_TERM,
+    dakota_sidebar.verify_dakota_search_results_scroll(
+        Config.DAKOTA_SIDEBAR_SEARCH_TERM
     )
