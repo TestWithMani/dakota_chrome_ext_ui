@@ -1,6 +1,6 @@
 pipeline {
     agent {
-        label 'windows-ui-agent'
+        label 'windows-ui'
     }
 
     options {
