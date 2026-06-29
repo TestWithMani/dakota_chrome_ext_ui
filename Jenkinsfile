@@ -759,7 +759,7 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
     def htmlUrl = "${jobUrl}Pytest_20HTML_20Report"
     def durationString = (currentBuild.durationString ?: 'N/A').replace(' and counting', '')
     def passRate = stats.total > 0 ? ((stats.passed * 100) / stats.total) as int : 0
-    def runDate = new Date().format('EEEE, MMMM d, yyyy')
+    def runDate = new Date().format('MMMM d, yyyy')
 
     def passRateColor = passRate >= 90 ? '#15803d' : (passRate >= 70 ? '#b45309' : '#b91c1c')
     def allureAvailable = fileExists(env.ALLURE_DIR ?: 'allure-results')
@@ -794,7 +794,7 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
         'No failed tests reported.'
     )
 
-    def subject = "Dakota Chrome Extension UI | ${runDate} | ${theme.label}"
+    def subject = "Dakota Marketplace UI | ${runDate}"
 
     def body = """
 <!DOCTYPE html>
