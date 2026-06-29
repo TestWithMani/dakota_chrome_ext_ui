@@ -761,13 +761,13 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
     def passRate = stats.total > 0 ? ((stats.passed * 100) / stats.total) as int : 0
     def runDate = new Date().format('MMMM d, yyyy')
 
-    def passRateColor = passRate >= 90 ? '#4ade80' : (passRate >= 70 ? '#fbbf24' : '#f87171')
+    def passRateColor = passRate >= 90 ? '#34d399' : (passRate >= 70 ? '#fbbf24' : '#fb7185')
     def allureAvailable = fileExists(env.ALLURE_DIR ?: 'allure-results')
     def allureButtonHtml = allureAvailable
-        ? "<a href=\"${allureUrl}\" style=\"display:inline-block;background:#ffffff;color:#0f172a;text-decoration:none;padding:10px 16px;border-radius:10px;font-size:11px;font-weight:900;letter-spacing:0.7px;box-shadow:0 8px 16px rgba(0,0,0,0.2);\">OPEN REPORT</a>"
-        : '<span style="display:inline-block;background:rgba(255,255,255,0.16);color:#ffffff;padding:10px 16px;border-radius:10px;font-size:10px;font-weight:800;">REPORT NOT AVAILABLE</span>'
+        ? "<a href=\"${allureUrl}\" style=\"display:inline-block;background:linear-gradient(135deg,#d4af37 0%,#c9a227 100%);color:#1c1917;text-decoration:none;padding:11px 18px;border-radius:10px;font-size:11px;font-weight:900;letter-spacing:0.8px;box-shadow:0 6px 18px rgba(201,162,39,0.35);\">OPEN REPORT</a>"
+        : '<span style="display:inline-block;background:rgba(255,255,255,0.08);color:#a8a29e;padding:10px 16px;border-radius:10px;font-size:10px;font-weight:800;border:1px solid #44403c;">REPORT NOT AVAILABLE</span>'
     def htmlButtonHtml = fileExists(env.PYTEST_HTML ?: 'test-results/report.html')
-        ? "<a href=\"${htmlUrl}\" style=\"display:inline-block;margin-top:10px;background:rgba(255,255,255,0.14);color:#ffffff;text-decoration:none;padding:9px 14px;border-radius:10px;font-size:10px;font-weight:800;letter-spacing:0.6px;border:1px solid rgba(255,255,255,0.22);\">PYTEST HTML</a>"
+        ? "<a href=\"${htmlUrl}\" style=\"display:inline-block;margin-top:10px;background:transparent;color:#d4af37;text-decoration:none;padding:9px 14px;border-radius:10px;font-size:10px;font-weight:800;letter-spacing:0.6px;border:1px solid #57534e;\">PYTEST HTML</a>"
         : ''
 
     def cleanedFailedTests = failedTests.collect { normalizeFailedTestNameToLabel(it ?: '') }.findAll { it }
@@ -804,63 +804,63 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dakota Chrome Extension UI Report</title>
   </head>
-  <body style="margin:0;padding:0;background:#e8edf5;font-family:'Segoe UI',Arial,'Trebuchet MS',sans-serif;">
+  <body style="margin:0;padding:0;background:#e8e4dc;font-family:'Segoe UI',Arial,'Trebuchet MS',sans-serif;">
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:28px 12px;background:linear-gradient(160deg,#dfe8f8 0%,#f4f7fb 55%,#eef2f7 100%);">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 14px;background:linear-gradient(165deg,#e8e4dc 0%,#f5f2eb 50%,#ebe6de 100%);">
       <tr>
         <td align="center">
 
-          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border-radius:28px;overflow:hidden;box-shadow:0 28px 64px rgba(15,23,42,0.16);border:1px solid #e3eaf3;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 24px 56px rgba(28,25,23,0.14);border:1px solid #ddd6ce;">
 
             <tr>
-              <td style="padding:0;background:linear-gradient(135deg,#0b1220 0%,#1e3a8a 52%,#0ea5e9 100%);">
+              <td style="padding:0;background:linear-gradient(135deg,#1c1917 0%,#292524 55%,#44403c 100%);">
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
-                    <td style="padding:30px 28px 22px;">
-                      <div style="font-size:11px;color:#93c5fd;font-weight:800;letter-spacing:1.6px;text-transform:uppercase;margin-bottom:8px;">Automation Report</div>
-                      <h1 style="margin:0;color:#ffffff;font-size:28px;line-height:1.15;font-weight:900;letter-spacing:-0.3px;">Dakota Chrome Extension UI Test Results</h1>
+                    <td style="padding:32px 28px 24px;">
+                      <div style="font-size:10px;color:#d4af37;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Automation Report</div>
+                      <h1 style="margin:0;color:#fafaf9;font-size:26px;line-height:1.2;font-weight:900;letter-spacing:-0.2px;">Dakota Chrome Extension UI Test Results</h1>
                     </td>
                   </tr>
                   <tr>
-                    <td style="height:3px;background:linear-gradient(90deg,#0ea5e9,#38bdf8,#818cf8);font-size:0;line-height:0;">&nbsp;</td>
+                    <td style="height:3px;background:linear-gradient(90deg,#c9a227,#d4af37,#e8d48b);font-size:0;line-height:0;">&nbsp;</td>
                   </tr>
                 </table>
               </td>
             </tr>
 
             <tr>
-              <td style="padding:18px 18px 8px;">
+              <td style="padding:20px 18px 10px;">
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
                     <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #dbe3ef;border-radius:16px;box-shadow:0 4px 14px rgba(15,23,42,0.04);">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #57534e;border-radius:14px;box-shadow:0 4px 12px rgba(28,25,23,0.05);">
                         <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#64748b;font-weight:800;letter-spacing:0.9px;">TOTAL</div>
-                          <div style="margin-top:8px;font-size:30px;font-weight:900;color:#0f172a;line-height:1;">${stats.total}</div>
+                          <div style="font-size:10px;color:#78716c;font-weight:800;letter-spacing:1px;">TOTAL</div>
+                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#1c1917;line-height:1;">${stats.total}</div>
                         </td></tr>
                       </table>
                     </td>
                     <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf7;border:1px solid #bbf7d0;border-radius:16px;box-shadow:0 4px 14px rgba(21,128,61,0.08);">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #10b981;border-radius:14px;box-shadow:0 4px 12px rgba(16,185,129,0.08);">
                         <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#15803d;font-weight:800;letter-spacing:0.9px;">PASSED</div>
-                          <div style="margin-top:8px;font-size:30px;font-weight:900;color:#15803d;line-height:1;">${stats.passed}</div>
+                          <div style="font-size:10px;color:#059669;font-weight:800;letter-spacing:1px;">PASSED</div>
+                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#047857;line-height:1;">${stats.passed}</div>
                         </td></tr>
                       </table>
                     </td>
                     <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fef2f2;border:1px solid #fecaca;border-radius:16px;box-shadow:0 4px 14px rgba(185,28,28,0.06);">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #e11d48;border-radius:14px;box-shadow:0 4px 12px rgba(225,29,72,0.06);">
                         <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#b91c1c;font-weight:800;letter-spacing:0.9px;">FAILED</div>
-                          <div style="margin-top:8px;font-size:30px;font-weight:900;color:#b91c1c;line-height:1;">${stats.failed}</div>
+                          <div style="font-size:10px;color:#e11d48;font-weight:800;letter-spacing:1px;">FAILED</div>
+                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#be123c;line-height:1;">${stats.failed}</div>
                         </td></tr>
                       </table>
                     </td>
                     <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:16px;box-shadow:0 4px 14px rgba(124,58,237,0.07);">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #8b5cf6;border-radius:14px;box-shadow:0 4px 12px rgba(139,92,246,0.07);">
                         <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#7c3aed;font-weight:800;letter-spacing:0.9px;">SKIPPED</div>
-                          <div style="margin-top:8px;font-size:30px;font-weight:900;color:#7c3aed;line-height:1;">${stats.skipped}</div>
+                          <div style="font-size:10px;color:#7c3aed;font-weight:800;letter-spacing:1px;">SKIPPED</div>
+                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#6d28d9;line-height:1;">${stats.skipped}</div>
                         </td></tr>
                       </table>
                     </td>
@@ -870,32 +870,34 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
             </tr>
 
             <tr>
-              <td style="padding:8px 18px 20px;">
+              <td style="padding:8px 18px 22px;">
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
                     <td width="50%" height="232" valign="top" style="padding-right:5px;">
-                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #3f3f46;border-radius:18px;overflow:hidden;background:#0f0f10;">
+                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #44403c;border-radius:16px;overflow:hidden;background:#1c1917;">
                         <tr>
-                          <td height="48" style="padding:0 16px;background:linear-gradient(90deg,#18181b 0%,#27272a 100%);border-bottom:1px solid #3f3f46;color:#f4f4f5;font-size:14px;font-weight:900;vertical-align:middle;line-height:48px;">Execution Details</td>
+                          <td height="48" style="padding:0 16px;background:#292524;border-bottom:1px solid #44403c;color:#fafaf9;font-size:13px;font-weight:900;vertical-align:middle;line-height:48px;">
+                            <span style="color:#d4af37;margin-right:6px;">&#9679;</span>Execution Details
+                          </td>
                         </tr>
                         <tr>
-                          <td height="184" valign="middle" style="padding:12px 14px;background:#1a1a1a;">
-                            <table width="100%" height="160" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#2a2a2a 0%,#1a1a1a 100%);border:1px solid #52525b;border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,0.45);">
+                          <td height="184" valign="middle" style="padding:14px;background:#1c1917;">
+                            <table width="100%" height="156" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#292524 0%,#1c1917 100%);border:1px solid #57534e;border-radius:12px;">
                               <tr>
-                                <td height="160" valign="middle" style="padding:14px 14px 10px;text-align:center;">
-                                  <div style="font-size:10px;color:#a1a1aa;font-weight:800;letter-spacing:1.4px;text-transform:uppercase;">Pass Rate</div>
-                                  <div style="margin:8px 0 12px;font-size:42px;font-weight:900;line-height:1;color:${passRateColor};text-shadow:0 2px 12px rgba(0,0,0,0.35);">${passRate}<span style="font-size:18px;color:#d4d4d8;">%</span></div>
+                                <td height="156" valign="middle" style="padding:14px 14px 10px;text-align:center;">
+                                  <div style="font-size:10px;color:#a8a29e;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;">Pass Rate</div>
+                                  <div style="margin:8px 0 12px;font-size:40px;font-weight:900;line-height:1;color:${passRateColor};">${passRate}<span style="font-size:17px;color:#d6d3d1;">%</span></div>
                                   <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px;">
                                     <tr>
-                                      <td style="height:11px;background:#333333;border-radius:999px;font-size:0;line-height:0;border:1px solid #52525b;">
-                                        <div style="width:${passRate}%;max-width:100%;height:9px;margin:1px;background:linear-gradient(90deg,#6366f1,#22d3ee,#4ade80);border-radius:999px;"></div>
+                                      <td style="height:10px;background:#44403c;border-radius:999px;font-size:0;line-height:0;">
+                                        <div style="width:${passRate}%;max-width:100%;height:10px;background:linear-gradient(90deg,#c9a227,#34d399);border-radius:999px;"></div>
                                       </td>
                                     </tr>
                                   </table>
-                                  <table width="100%" cellpadding="0" cellspacing="0" style="background:#2d2d2d;border:1px solid #52525b;border-radius:10px;">
+                                  <table width="100%" cellpadding="0" cellspacing="0" style="background:#292524;border:1px solid #57534e;border-radius:10px;">
                                     <tr>
-                                      <td style="padding:10px 12px;font-size:11px;font-weight:800;color:#a1a1aa;">Duration</td>
-                                      <td align="right" style="padding:10px 12px;font-size:12px;font-weight:900;color:#fafafa;">${durationString}</td>
+                                      <td style="padding:10px 12px;font-size:11px;font-weight:800;color:#a8a29e;">Duration</td>
+                                      <td align="right" style="padding:10px 12px;font-size:12px;font-weight:900;color:#fafaf9;">${durationString}</td>
                                     </tr>
                                   </table>
                                 </td>
@@ -907,17 +909,19 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
                     </td>
 
                     <td width="50%" height="232" valign="top" style="padding-left:5px;">
-                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #c7d2fe;border-radius:18px;overflow:hidden;background:#ffffff;">
+                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #44403c;border-radius:16px;overflow:hidden;background:#1c1917;">
                         <tr>
-                          <td height="48" style="padding:0 16px;background:linear-gradient(90deg,#312e81 0%,#1d4ed8 48%,#0891b2 100%);color:#ffffff;font-size:14px;font-weight:900;vertical-align:middle;line-height:48px;">Allure Report</td>
+                          <td height="48" style="padding:0 16px;background:#292524;border-bottom:1px solid #44403c;color:#fafaf9;font-size:13px;font-weight:900;vertical-align:middle;line-height:48px;">
+                            <span style="color:#d4af37;margin-right:6px;">&#9679;</span>Allure Report
+                          </td>
                         </tr>
                         <tr>
-                          <td height="184" valign="middle" style="padding:12px 14px;background:linear-gradient(160deg,#020617 0%,#0f172a 45%,#1d4ed8 100%);">
-                            <table width="100%" height="160" cellpadding="0" cellspacing="0">
+                          <td height="184" valign="middle" style="padding:14px;background:linear-gradient(165deg,#1c1917 0%,#292524 100%);">
+                            <table width="100%" height="156" cellpadding="0" cellspacing="0">
                               <tr>
-                                <td height="160" valign="middle" style="padding:0 4px;">
-                                  <div style="color:#ffffff;font-size:20px;line-height:1.25;font-weight:900;">Test Evidence</div>
-                                  <div style="margin-top:8px;color:#cbd5e1;font-size:12px;line-height:1.55;">
+                                <td height="156" valign="middle" style="padding:4px 6px;">
+                                  <div style="color:#fafaf9;font-size:19px;line-height:1.25;font-weight:900;">Test Evidence</div>
+                                  <div style="margin-top:8px;color:#a8a29e;font-size:12px;line-height:1.55;">
                                     Analytics, screenshots, logs, and validation details.
                                   </div>
                                   <div style="margin-top:16px;">${allureButtonHtml}</div>
@@ -936,10 +940,10 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
 
             ${cleanedFailedTests ? """
             <tr>
-              <td style="padding:0 18px 20px;">
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #fecaca;border-radius:18px;overflow:hidden;">
+              <td style="padding:0 18px 22px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #fecdd3;border-radius:16px;overflow:hidden;">
                   <tr>
-                    <td style="padding:14px 16px;background:#fef2f2;color:#b91c1c;font-size:13px;font-weight:900;">Failed Tests</td>
+                    <td style="padding:14px 16px;background:#fff1f2;color:#be123c;font-size:13px;font-weight:900;border-bottom:1px solid #fecdd3;">Failed Tests</td>
                   </tr>
                   <tr>
                     <td style="padding:14px 16px;">${failedTestSummary}</td>
@@ -950,8 +954,8 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
             """ : ''}
 
             <tr>
-              <td style="background:#0a0a0a;padding:14px 18px;text-align:center;">
-                <span style="color:#f8fafc;font-size:11px;font-weight:800;letter-spacing:0.3px;">Dakota Marketplace Automation</span>
+              <td style="background:linear-gradient(135deg,#1c1917 0%,#292524 100%);padding:16px 18px;text-align:center;border-top:3px solid #c9a227;">
+                <span style="color:#d4af37;font-size:11px;font-weight:800;letter-spacing:0.5px;">Dakota Marketplace Automation</span>
               </td>
             </tr>
 
