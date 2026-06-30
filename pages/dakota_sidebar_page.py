@@ -281,6 +281,7 @@ class DakotaSidebarPage(DakotaExtensionActions):
         )
         return list(texts or [])
 
+    def _scroll_shadow_container_to_end(self, container_selectors: tuple[str, ...]) -> None:
         scrolled = self._js(
             """
             const root = document.getElementById('crxjs-app')?.shadowRoot;

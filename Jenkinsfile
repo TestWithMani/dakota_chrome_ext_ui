@@ -756,40 +756,36 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
 
     def jobUrl = env.BUILD_URL ?: ''
     def allureUrl = "${jobUrl}allure"
-    def htmlUrl = "${jobUrl}Pytest_20HTML_20Report"
     def durationString = (currentBuild.durationString ?: 'N/A').replace(' and counting', '')
     def passRate = stats.total > 0 ? ((stats.passed * 100) / stats.total) as int : 0
     def runDate = new Date().format('MMMM d, yyyy')
 
-    def passRateColor = passRate >= 90 ? '#34d399' : (passRate >= 70 ? '#fbbf24' : '#fb7185')
+    def passRateColor = passRate >= 90 ? '#b8860b' : (passRate >= 70 ? '#c9a227' : '#c0392b')
     def allureAvailable = fileExists(env.ALLURE_DIR ?: 'allure-results')
     def allureButtonHtml = allureAvailable
-        ? "<a href=\"${allureUrl}\" style=\"display:inline-block;background:linear-gradient(135deg,#d4af37 0%,#c9a227 100%);color:#1c1917;text-decoration:none;padding:11px 18px;border-radius:10px;font-size:11px;font-weight:900;letter-spacing:0.8px;box-shadow:0 6px 18px rgba(201,162,39,0.35);\">OPEN REPORT</a>"
-        : '<span style="display:inline-block;background:rgba(255,255,255,0.08);color:#a8a29e;padding:10px 16px;border-radius:10px;font-size:10px;font-weight:800;border:1px solid #44403c;">REPORT NOT AVAILABLE</span>'
-    def htmlButtonHtml = fileExists(env.PYTEST_HTML ?: 'test-results/report.html')
-        ? "<a href=\"${htmlUrl}\" style=\"display:inline-block;margin-top:10px;background:transparent;color:#d4af37;text-decoration:none;padding:9px 14px;border-radius:10px;font-size:10px;font-weight:800;letter-spacing:0.6px;border:1px solid #57534e;\">PYTEST HTML</a>"
-        : ''
+        ? "<a href=\"${allureUrl}\" style=\"display:inline-block;background:linear-gradient(135deg,#d4af37 0%,#b8860b 100%);color:#1a1a1a;text-decoration:none;padding:11px 20px;border-radius:8px;font-size:11px;font-weight:700;letter-spacing:0.7px;box-shadow:0 4px 16px rgba(184,134,11,0.35);border:1px solid #e8d48b;\">OPEN REPORT</a>"
+        : '<span style="display:inline-block;background:#eceff3;color:#6b7280;padding:10px 16px;border-radius:8px;font-size:10px;font-weight:700;border:1px solid #c0c0c0;">REPORT NOT AVAILABLE</span>'
 
     def cleanedFailedTests = failedTests.collect { normalizeFailedTestNameToLabel(it ?: '') }.findAll { it }
 
     def corporateIssueList = { List items, String accentColor, String bgColor, String emptyMessage ->
         if (!items) {
             return """
-            <div style="padding:14px 16px;font-size:13px;font-weight:700;color:#15803d;background:#ecfaf3;border:1px solid #c9efdc;border-radius:12px;text-align:center;line-height:1.5;">
+            <div style="padding:14px 16px;font-size:13px;font-weight:600;color:#059669;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;text-align:center;line-height:1.5;">
               ${emptyMessage}
             </div>
             """.stripIndent()
         }
         items.collect { item ->
             """
-            <div style="margin:0 0 8px;padding:11px 14px;background:${bgColor};border:1px solid #dbe3ef;border-left:4px solid ${accentColor};border-radius:12px;font-size:12px;font-weight:700;color:#0f172a;line-height:1.5;">${item}</div>
+            <div style="margin:0 0 8px;padding:11px 14px;background:${bgColor};border:1px solid #fecaca;border-left:3px solid ${accentColor};border-radius:8px;font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;">${item}</div>
             """.stripIndent()
         }.join('')
     }
 
     def failedTestSummary = corporateIssueList(
         cleanedFailedTests,
-        '#b91c1c',
+        '#dc2626',
         '#fef2f2',
         'No failed tests reported.'
     )
@@ -804,100 +800,98 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dakota Chrome Extension UI Report</title>
   </head>
-  <body style="margin:0;padding:0;background:#e8e4dc;font-family:'Segoe UI',Arial,'Trebuchet MS',sans-serif;">
+  <body style="margin:0;padding:0;background:#e8eaed;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
 
-    <table width="100%" cellpadding="0" cellspacing="0" style="padding:32px 14px;background:linear-gradient(165deg,#e8e4dc 0%,#f5f2eb 50%,#ebe6de 100%);">
+    <table width="100%" cellpadding="0" cellspacing="0" style="padding:36px 16px;background:linear-gradient(165deg,#e8eaed 0%,#f0f7fc 50%,#eceff3 100%);">
       <tr>
         <td align="center">
 
-          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border-radius:24px;overflow:hidden;box-shadow:0 24px 56px rgba(28,25,23,0.14);border:1px solid #ddd6ce;">
+          <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fafbfc;border-radius:12px;overflow:hidden;box-shadow:0 12px 40px rgba(26,26,26,0.12);border:1px solid #c0c0c0;">
 
             <tr>
-              <td style="padding:0;background:linear-gradient(135deg,#1c1917 0%,#292524 55%,#44403c 100%);">
+              <td style="padding:0;background:linear-gradient(135deg,#0f1419 0%,#1c1c28 55%,#2a2a35 100%);">
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
-                    <td style="padding:32px 28px 24px;">
-                      <div style="font-size:10px;color:#d4af37;font-weight:800;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;">Automation Report</div>
-                      <h1 style="margin:0;color:#fafaf9;font-size:26px;line-height:1.2;font-weight:900;letter-spacing:-0.2px;">Dakota Chrome Extension UI Test Results</h1>
+                    <td style="padding:28px 32px 24px;">
+                      <div style="font-size:11px;color:#d4af37;font-weight:600;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">Automation Report</div>
+                      <h1 style="margin:0;color:#f5f5f5;font-size:24px;line-height:1.3;font-weight:700;letter-spacing:-0.3px;">Dakota Chrome Extension UI Test Results</h1>
                     </td>
                   </tr>
                   <tr>
-                    <td style="height:3px;background:linear-gradient(90deg,#c9a227,#d4af37,#e8d48b);font-size:0;line-height:0;">&nbsp;</td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-
-            <tr>
-              <td style="padding:20px 18px 10px;">
-                <table width="100%" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #57534e;border-radius:14px;box-shadow:0 4px 12px rgba(28,25,23,0.05);">
-                        <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#78716c;font-weight:800;letter-spacing:1px;">TOTAL</div>
-                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#1c1917;line-height:1;">${stats.total}</div>
-                        </td></tr>
-                      </table>
-                    </td>
-                    <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #10b981;border-radius:14px;box-shadow:0 4px 12px rgba(16,185,129,0.08);">
-                        <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#059669;font-weight:800;letter-spacing:1px;">PASSED</div>
-                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#047857;line-height:1;">${stats.passed}</div>
-                        </td></tr>
-                      </table>
-                    </td>
-                    <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #e11d48;border-radius:14px;box-shadow:0 4px 12px rgba(225,29,72,0.06);">
-                        <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#e11d48;font-weight:800;letter-spacing:1px;">FAILED</div>
-                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#be123c;line-height:1;">${stats.failed}</div>
-                        </td></tr>
-                      </table>
-                    </td>
-                    <td width="25%" style="padding:4px;">
-                      <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #e7e5e4;border-top:3px solid #8b5cf6;border-radius:14px;box-shadow:0 4px 12px rgba(139,92,246,0.07);">
-                        <tr><td style="padding:16px 10px;text-align:center;">
-                          <div style="font-size:10px;color:#7c3aed;font-weight:800;letter-spacing:1px;">SKIPPED</div>
-                          <div style="margin-top:8px;font-size:28px;font-weight:900;color:#6d28d9;line-height:1;">${stats.skipped}</div>
-                        </td></tr>
-                      </table>
-                    </td>
+                    <td style="height:3px;background:linear-gradient(90deg,#c0c0c0,#d4af37,#e8f4fc,#d4af37,#c0c0c0);font-size:0;line-height:0;">&nbsp;</td>
                   </tr>
                 </table>
               </td>
             </tr>
 
             <tr>
-              <td style="padding:8px 18px 22px;">
+              <td style="padding:24px 24px 8px;background:linear-gradient(180deg,#eceff3 0%,#f4f6f8 100%);">
                 <table width="100%" cellpadding="0" cellspacing="0">
                   <tr>
-                    <td width="50%" height="232" valign="top" style="padding-right:5px;">
-                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #44403c;border-radius:16px;overflow:hidden;background:#1c1917;">
+                    <td width="25%" style="padding:4px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#f8f9fb 0%,#eceff3 100%);border:1px solid #c0c0c0;border-top:2px solid #9ca3af;border-radius:8px;">
+                        <tr><td style="padding:18px 12px;text-align:center;">
+                          <div style="font-size:10px;color:#6b7280;font-weight:600;letter-spacing:1.2px;">TOTAL</div>
+                          <div style="margin-top:6px;font-size:26px;font-weight:700;color:#1a1a1a;line-height:1;">${stats.total}</div>
+                        </td></tr>
+                      </table>
+                    </td>
+                    <td width="25%" style="padding:4px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#fdf9ef 0%,#f5ecd4 100%);border:1px solid #d4af37;border-top:2px solid #d4af37;border-radius:8px;">
+                        <tr><td style="padding:18px 12px;text-align:center;">
+                          <div style="font-size:10px;color:#9a7b0a;font-weight:600;letter-spacing:1.2px;">PASSED</div>
+                          <div style="margin-top:6px;font-size:26px;font-weight:700;color:#b8860b;line-height:1;">${stats.passed}</div>
+                        </td></tr>
+                      </table>
+                    </td>
+                    <td width="25%" style="padding:4px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#fafbfc 0%,#f1f3f5 100%);border:1px solid #c0c0c0;border-top:2px solid #c0392b;border-radius:8px;">
+                        <tr><td style="padding:18px 12px;text-align:center;">
+                          <div style="font-size:10px;color:#c0392b;font-weight:600;letter-spacing:1.2px;">FAILED</div>
+                          <div style="margin-top:6px;font-size:26px;font-weight:700;color:#922b21;line-height:1;">${stats.failed}</div>
+                        </td></tr>
+                      </table>
+                    </td>
+                    <td width="25%" style="padding:4px;">
+                      <table width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#f7fbff 0%,#e8f4fc 100%);border:1px solid #b9d4e8;border-top:2px solid #7ec8e3;border-radius:8px;">
+                        <tr><td style="padding:18px 12px;text-align:center;">
+                          <div style="font-size:10px;color:#5b9aa9;font-weight:600;letter-spacing:1.2px;">SKIPPED</div>
+                          <div style="margin-top:6px;font-size:26px;font-weight:700;color:#3d7a8a;line-height:1;">${stats.skipped}</div>
+                        </td></tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding:8px 24px 24px;background:linear-gradient(180deg,#f4f6f8 0%,#eceff3 100%);">
+                <table width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td width="50%" height="232" valign="top" style="padding-right:6px;">
+                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #d4af37;border-radius:10px;overflow:hidden;background:linear-gradient(180deg,#fdf9ef 0%,#f5ecd4 100%);">
                         <tr>
-                          <td height="48" style="padding:0 16px;background:#292524;border-bottom:1px solid #44403c;color:#fafaf9;font-size:13px;font-weight:900;vertical-align:middle;line-height:48px;">
-                            <span style="color:#d4af37;margin-right:6px;">&#9679;</span>Execution Details
-                          </td>
+                          <td height="44" style="padding:0 16px;background:linear-gradient(90deg,#8b7355 0%,#d4af37 100%);border-bottom:1px solid #c9a227;color:#1a1a1a;font-size:13px;font-weight:700;vertical-align:middle;line-height:44px;">Execution Details</td>
                         </tr>
                         <tr>
-                          <td height="184" valign="middle" style="padding:14px;background:#1c1917;">
-                            <table width="100%" height="156" cellpadding="0" cellspacing="0" style="background:linear-gradient(180deg,#292524 0%,#1c1917 100%);border:1px solid #57534e;border-radius:12px;">
+                          <td height="188" valign="middle" style="padding:16px;background:linear-gradient(180deg,#fdf9ef 0%,#f8f4e8 100%);">
+                            <table width="100%" height="156" cellpadding="0" cellspacing="0" style="background:#fafcff;border:1px solid #c0c0c0;border-radius:8px;box-shadow:0 2px 12px rgba(192,192,192,0.25);">
                               <tr>
-                                <td height="156" valign="middle" style="padding:14px 14px 10px;text-align:center;">
-                                  <div style="font-size:10px;color:#a8a29e;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;">Pass Rate</div>
-                                  <div style="margin:8px 0 12px;font-size:40px;font-weight:900;line-height:1;color:${passRateColor};">${passRate}<span style="font-size:17px;color:#d6d3d1;">%</span></div>
-                                  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:10px;">
+                                <td height="156" valign="middle" style="padding:16px 14px;text-align:center;">
+                                  <div style="font-size:10px;color:#9a7b0a;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;">Pass Rate</div>
+                                  <div style="margin:6px 0 14px;font-size:38px;font-weight:700;line-height:1;color:${passRateColor};">${passRate}<span style="font-size:16px;color:#9ca3af;">%</span></div>
+                                  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px;">
                                     <tr>
-                                      <td style="height:10px;background:#44403c;border-radius:999px;font-size:0;line-height:0;">
-                                        <div style="width:${passRate}%;max-width:100%;height:10px;background:linear-gradient(90deg,#c9a227,#34d399);border-radius:999px;"></div>
+                                      <td style="height:8px;background:#e5e7eb;border-radius:4px;font-size:0;line-height:0;">
+                                        <div style="width:${passRate}%;max-width:100%;height:8px;background:linear-gradient(90deg,#c0c0c0,#d4af37,#e8d48b);border-radius:4px;"></div>
                                       </td>
                                     </tr>
                                   </table>
-                                  <table width="100%" cellpadding="0" cellspacing="0" style="background:#292524;border:1px solid #57534e;border-radius:10px;">
+                                  <table width="100%" cellpadding="0" cellspacing="0" style="background:#eceff3;border:1px solid #c0c0c0;border-radius:8px;">
                                     <tr>
-                                      <td style="padding:10px 12px;font-size:11px;font-weight:800;color:#a8a29e;">Duration</td>
-                                      <td align="right" style="padding:10px 12px;font-size:12px;font-weight:900;color:#fafaf9;">${durationString}</td>
+                                      <td style="padding:10px 14px;font-size:12px;font-weight:600;color:#6b7280;">Duration</td>
+                                      <td align="right" style="padding:10px 14px;font-size:12px;font-weight:700;color:#1a1a1a;">${durationString}</td>
                                     </tr>
                                   </table>
                                 </td>
@@ -908,24 +902,21 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
                       </table>
                     </td>
 
-                    <td width="50%" height="232" valign="top" style="padding-left:5px;">
-                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #44403c;border-radius:16px;overflow:hidden;background:#1c1917;">
+                    <td width="50%" height="232" valign="top" style="padding-left:6px;">
+                      <table width="100%" height="232" cellpadding="0" cellspacing="0" style="border:1px solid #b9d4e8;border-radius:10px;overflow:hidden;background:linear-gradient(180deg,#f7fbff 0%,#e8f4fc 100%);">
                         <tr>
-                          <td height="48" style="padding:0 16px;background:#292524;border-bottom:1px solid #44403c;color:#fafaf9;font-size:13px;font-weight:900;vertical-align:middle;line-height:48px;">
-                            <span style="color:#d4af37;margin-right:6px;">&#9679;</span>Allure Report
-                          </td>
+                          <td height="44" style="padding:0 16px;background:linear-gradient(90deg,#94a3b8 0%,#cbd5e1 100%);border-bottom:1px solid #c0c0c0;color:#1a1a1a;font-size:13px;font-weight:700;vertical-align:middle;line-height:44px;">Allure Report</td>
                         </tr>
                         <tr>
-                          <td height="184" valign="middle" style="padding:14px;background:linear-gradient(165deg,#1c1917 0%,#292524 100%);">
-                            <table width="100%" height="156" cellpadding="0" cellspacing="0">
+                          <td height="188" valign="middle" style="padding:16px;background:linear-gradient(180deg,#f7fbff 0%,#eef6fc 100%);">
+                            <table width="100%" height="156" cellpadding="0" cellspacing="0" style="background:#fafcff;border:1px solid #b9d4e8;border-radius:8px;box-shadow:0 2px 12px rgba(126,200,227,0.2);">
                               <tr>
-                                <td height="156" valign="middle" style="padding:4px 6px;">
-                                  <div style="color:#fafaf9;font-size:19px;line-height:1.25;font-weight:900;">Test Evidence</div>
-                                  <div style="margin-top:8px;color:#a8a29e;font-size:12px;line-height:1.55;">
+                                <td height="156" valign="middle" style="padding:14px 12px;">
+                                  <div style="color:#1a1a1a;font-size:17px;line-height:1.3;font-weight:700;">Test Evidence</div>
+                                  <div style="margin-top:6px;color:#6b7280;font-size:12px;line-height:1.55;">
                                     Analytics, screenshots, logs, and validation details.
                                   </div>
-                                  <div style="margin-top:16px;">${allureButtonHtml}</div>
-                                  <div style="margin-top:8px;">${htmlButtonHtml}</div>
+                                  <div style="margin-top:18px;">${allureButtonHtml}</div>
                                 </td>
                               </tr>
                             </table>
@@ -940,10 +931,10 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
 
             ${cleanedFailedTests ? """
             <tr>
-              <td style="padding:0 18px 22px;">
-                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafaf9;border:1px solid #fecdd3;border-radius:16px;overflow:hidden;">
+              <td style="padding:0 24px 24px;background:#eceff3;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#fafbfc;border:1px solid #c0392b;border-radius:10px;overflow:hidden;">
                   <tr>
-                    <td style="padding:14px 16px;background:#fff1f2;color:#be123c;font-size:13px;font-weight:900;border-bottom:1px solid #fecdd3;">Failed Tests</td>
+                    <td style="padding:12px 16px;background:linear-gradient(90deg,#f1f3f5,#fef2f2);color:#922b21;font-size:13px;font-weight:700;border-bottom:1px solid #c0c0c0;">Failed Tests</td>
                   </tr>
                   <tr>
                     <td style="padding:14px 16px;">${failedTestSummary}</td>
@@ -954,8 +945,8 @@ def sendEmailNotification(String buildStatus, String defaultEmail, String additi
             """ : ''}
 
             <tr>
-              <td style="background:linear-gradient(135deg,#1c1917 0%,#292524 100%);padding:16px 18px;text-align:center;border-top:3px solid #c9a227;">
-                <span style="color:#d4af37;font-size:11px;font-weight:800;letter-spacing:0.5px;">Dakota Marketplace Automation</span>
+              <td style="background:linear-gradient(135deg,#0f1419 0%,#1c1c28 100%);padding:16px 24px;text-align:center;border-top:2px solid #d4af37;">
+                <span style="color:#d4af37;font-size:11px;font-weight:600;letter-spacing:0.5px;">Dakota Marketplace Automation</span>
               </td>
             </tr>
 
